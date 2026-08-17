@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
 import shutil
 import socket
 import subprocess
@@ -35,6 +37,40 @@ def load_compose() -> dict[str, object]:
     return compose
 
 
+def require_command(command: str, purpose: str) -> str:
+    executable = shutil.which(command)
+    if executable is not None:
+        return executable
+    message = f"{command} is required for {purpose}"
+    if os.environ.get("CI", "").casefold() == "true":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+def require_docker_daemon(purpose: str) -> None:
+    require_command("docker", purpose)
+    daemon = subprocess.run(
+        ["docker", "info"], capture_output=True, text=True, check=False
+    )
+    if daemon.returncode == 0:
+        return
+    message = f"Docker daemon is required for {purpose}: {daemon.stderr.strip()}"
+    if os.environ.get("CI", "").casefold() == "true":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+def test_ci_treats_missing_docker_as_a_contract_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CI must fail closed when required deployment tooling disappears."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(shutil, "which", lambda _command: None)
+
+    with pytest.raises(pytest.fail.Exception, match="docker is required"):
+        require_command("docker", "the deployment contract")
+
+
 def test_compose_exposes_only_caddy_and_isolates_application_services() -> None:
     compose = load_compose()
     services = compose["services"]
@@ -46,10 +82,12 @@ def test_compose_exposes_only_caddy_and_isolates_application_services() -> None:
     assert "ports" not in services["api"]
     assert "ports" not in services["worker"]
     assert set(services["api"]["networks"]) == {"internal"}
-    assert set(services["worker"]["networks"]) == {"internal"}
+    assert set(services["worker"]["networks"]) == {"internal", "outbound"}
     assert set(services["caddy"]["networks"]) == {"edge", "internal"}
+    assert set(compose["networks"]) == {"edge", "internal", "outbound"}
     assert compose["networks"]["internal"]["internal"] is True
     assert compose["networks"]["edge"]["internal"] is False
+    assert compose["networks"]["outbound"]["internal"] is False
 
 
 def test_application_containers_have_a_hardened_filesystem_boundary() -> None:
@@ -111,8 +149,8 @@ def test_caddy_routes_encode_the_public_trust_boundary() -> None:
 
 
 def test_caddy_adapts_an_oversize_rejection_before_any_proxy() -> None:
-    if shutil.which("docker") is None:
-        pytest.skip("Docker is required to validate the Caddy adapter output")
+    require_command("docker", "Caddy adapter validation")
+    caddy_image = load_compose()["services"]["caddy"]["image"]
     completed = subprocess.run(
         [
             "docker",
@@ -122,7 +160,7 @@ def test_caddy_adapts_an_oversize_rejection_before_any_proxy() -> None:
             "LINK2VAULT_MAX_UPLOAD_MB=1",
             "--volume",
             f"{CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro",
-            "caddy:2.10.2-alpine",
+            caddy_image,
             "caddy",
             "adapt",
             "--config",
@@ -205,8 +243,7 @@ def test_caddy_uses_only_compose_v2_compatible_interpolated_environment() -> Non
 
 
 def test_clean_checkout_compose_config_resolves_safe_caddy_defaults() -> None:
-    if shutil.which("docker") is None:
-        pytest.skip("Docker Compose v2 is required for the deployment contract")
+    require_command("docker", "the Docker Compose deployment contract")
 
     completed = subprocess.run(
         ["docker", "compose", "-f", str(COMPOSE_PATH), "config"],
@@ -228,8 +265,7 @@ def test_clean_checkout_compose_config_resolves_safe_caddy_defaults() -> None:
 
 
 def test_explicit_env_file_overrides_reach_caddy(tmp_path: Path) -> None:
-    if shutil.which("docker") is None:
-        pytest.skip("Docker Compose v2 is required for the deployment contract")
+    require_command("docker", "the Docker Compose deployment contract")
 
     environment_file = tmp_path / "operator.env"
     environment_file.write_text(
@@ -266,8 +302,7 @@ def test_explicit_env_file_overrides_reach_caddy(tmp_path: Path) -> None:
 
 
 def test_empty_admin_env_file_values_remain_fail_closed(tmp_path: Path) -> None:
-    if shutil.which("docker") is None:
-        pytest.skip("Docker Compose v2 is required for the deployment contract")
+    require_command("docker", "the Docker Compose deployment contract")
 
     environment_file = tmp_path / "empty-admin.env"
     environment_file.write_text(
@@ -304,13 +339,8 @@ def test_empty_admin_env_file_values_remain_fail_closed(tmp_path: Path) -> None:
 
 
 def test_configured_compose_enforces_auth_and_upload_limit(tmp_path: Path) -> None:
-    if shutil.which("docker") is None:
-        pytest.skip("Docker Compose v2 is required for the runtime contract")
-    daemon = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, check=False
-    )
-    if daemon.returncode != 0:
-        pytest.skip(f"Docker daemon is unavailable: {daemon.stderr.strip()}")
+    require_docker_daemon("the configured runtime contract")
+    caddy_image = load_compose()["services"]["caddy"]["image"]
 
     password = "phase1-contract-test-password"
     password_hash = subprocess.run(
@@ -318,7 +348,7 @@ def test_configured_compose_enforces_auth_and_upload_limit(tmp_path: Path) -> No
             "docker",
             "run",
             "--rm",
-            "caddy:2.10.2-alpine",
+            caddy_image,
             "caddy",
             "hash-password",
             "--plaintext",
@@ -415,13 +445,7 @@ def test_configured_compose_enforces_auth_and_upload_limit(tmp_path: Path) -> No
 
 def test_dockerignore_exports_only_the_required_build_inputs(tmp_path: Path) -> None:
     assert DOCKERIGNORE_PATH.is_file(), "the root Docker build context must be bounded"
-    if shutil.which("docker") is None:
-        pytest.skip("Docker is required to pressure-test the build context")
-    daemon = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, check=False
-    )
-    if daemon.returncode != 0:
-        pytest.skip(f"Docker daemon is unavailable: {daemon.stderr.strip()}")
+    require_docker_daemon("the bounded build-context pressure test")
 
     context = tmp_path / "context"
     required_files = {
@@ -512,10 +536,44 @@ def test_examples_contain_only_safe_defaults_and_empty_operator_values() -> None
     }
 
 
+def test_non_default_operator_environment_file_is_ignored() -> None:
+    """The explicitly named operator file must never become a public candidate."""
+    completed = subprocess.run(
+        [
+            "git",
+            "check-ignore",
+            "--quiet",
+            "--no-index",
+            "--",
+            "deploy/docker/operator.env",
+        ],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+
+
 def test_runtime_image_is_locked_multistage_and_non_root() -> None:
     dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+    compose = load_compose()
+    python_images = re.findall(
+        r"^FROM (python:3\.12-slim@sha256:[0-9a-f]{64}) AS (?:builder|runtime)$",
+        dockerfile,
+        flags=re.MULTILINE,
+    )
 
-    assert dockerfile.count("FROM python:3.12-slim") == 2
+    assert len(python_images) == 2
+    assert len(set(python_images)) == 1
+    assert re.search(
+        r"^FROM ghcr\.io/astral-sh/uv:0\.12\.1@sha256:[0-9a-f]{64} AS uv$",
+        dockerfile,
+        flags=re.MULTILINE,
+    )
+    assert re.fullmatch(
+        r"caddy:2\.10\.2-alpine@sha256:[0-9a-f]{64}",
+        compose["services"]["caddy"]["image"],
+    )
     assert "uv sync --frozen --no-dev" in dockerfile
     assert "USER 10001:10001" in dockerfile
     assert "COPY ." not in dockerfile

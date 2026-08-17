@@ -207,6 +207,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "starlette", extra = ["full"] },
 ]
@@ -221,6 +222,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8,<10" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "ruff", specifier = ">=0.8,<1" },
     { name = "starlette", extras = ["full"], specifier = ">=1.3,<2" },
 ]

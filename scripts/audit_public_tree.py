@@ -57,6 +57,7 @@ PRIVATE_PATH_PARTS = {
     "obsidian_vault",
     "outputs",
     "proofreading",
+    "recordings",
     "releases",
     "transcripts",
     "vault",
@@ -69,7 +70,10 @@ SAFE_HOSTS = {
     "example.org",
     "fastapi.tiangolo.com",
     "files.pythonhosted.org",
+    "docker.io",
+    "ghcr.io",
     "github.com",
+    "hub.docker.com",
     "opensource.org",
     "pypi.org",
     "raw.githubusercontent.com",
@@ -107,14 +111,18 @@ class Finding:
 def audit_tree(root: Path) -> list[Finding]:
     """Return deterministic, redacted findings for public-tree candidates."""
     root = root.resolve()
-    allowlist = _read_allowlist(root)
     nested_git_paths = set(_nested_git_paths(root))
     findings = [
         Finding(relative, "nested_git", "<nested-git>")
         for relative in sorted(nested_git_paths)
     ]
 
-    for path in _candidate_files(root):
+    index_entries = _git_index_entries(root)
+    if index_entries is not None:
+        findings.extend(_audit_index(root, index_entries, nested_git_paths))
+
+    allowlist = _read_allowlist(root)
+    for path in _worktree_candidates(root):
         relative = path.relative_to(root).as_posix()
         if relative in nested_git_paths:
             continue
@@ -131,7 +139,10 @@ def audit_tree(root: Path) -> list[Finding]:
 
         findings.extend(_content_findings(relative, path))
 
-    return sorted(findings, key=lambda finding: (finding.path, finding.rule, finding.evidence))
+    return sorted(
+        set(findings),
+        key=lambda finding: (finding.path, finding.rule, finding.evidence),
+    )
 
 
 def _read_allowlist(root: Path) -> tuple[str, ...]:
@@ -144,6 +155,12 @@ def _read_allowlist(root: Path) -> tuple[str, ...]:
         return ()
     if text is None:
         return ()
+    return _allowlist_entries(text)
+
+
+def _allowlist_entries(text: str | None) -> tuple[str, ...]:
+    if text is None:
+        return ()
     entries: list[str] = []
     for line in text.splitlines():
         entry = line.strip()
@@ -152,7 +169,47 @@ def _read_allowlist(root: Path) -> tuple[str, ...]:
     return tuple(entries)
 
 
-def _candidate_files(root: Path) -> list[Path]:
+def _index_blob_size(root: Path, entry: _IndexEntry) -> int | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-s", entry.object_id],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _index_blob(root: Path, entry: _IndexEntry, *, limit: int) -> bytes | None:
+    size = _index_blob_size(root, entry)
+    if size is None or size > limit:
+        return None
+    result = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "blob", entry.object_id],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0 or len(result.stdout) != size:
+        return None
+    return result.stdout
+
+
+def _index_text(root: Path, entry: _IndexEntry | None) -> str | None:
+    if entry is None:
+        return None
+    content = _index_blob(root, entry, limit=TEXT_LIMIT_BYTES)
+    if content is None:
+        return None
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _worktree_candidates(root: Path) -> list[Path]:
     tracked = _git_candidates(root)
     if tracked is not None:
         return tracked
@@ -174,8 +231,121 @@ def _candidate_files(root: Path) -> list[Path]:
     return candidates
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexEntry:
+    relative: str
+    mode: str
+    object_id: str
+
+
+def _git_index_entries(root: Path) -> list[_IndexEntry] | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--cached", "--stage", "-z"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    entries: list[_IndexEntry] = []
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, encoded_path = record.split(b"\t", maxsplit=1)
+            mode, object_id, stage = metadata.decode("ascii").split()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if stage != "0":
+            continue
+        entries.append(
+            _IndexEntry(
+                relative=os.fsdecode(encoded_path),
+                mode=mode,
+                object_id=object_id,
+            )
+        )
+    return sorted(entries, key=lambda entry: entry.relative)
+
+
+def _audit_index(
+    root: Path,
+    entries: list[_IndexEntry],
+    nested_git_paths: set[str],
+) -> list[Finding]:
+    entry_by_path = {entry.relative: entry for entry in entries}
+    allowlist_text = _index_text(root, entry_by_path.get(CONFIG_FILE))
+    allowlist = _allowlist_entries(allowlist_text)
+    manifest_entry = entry_by_path.get("tests/fixtures-synthetic/MANIFEST.sha256")
+    manifest_text = _index_text(root, manifest_entry)
+    findings: list[Finding] = []
+
+    for entry in entries:
+        relative = entry.relative
+        if relative in nested_git_paths:
+            continue
+        suffix = Path(relative).suffix.lower()
+        intrinsic_rule = _intrinsic_rule(relative, suffix)
+        if intrinsic_rule is not None:
+            findings.append(Finding(relative, intrinsic_rule, f"<{intrinsic_rule}>"))
+            continue
+
+        if entry.mode == "120000":
+            target_bytes = _index_blob(root, entry, limit=TEXT_LIMIT_BYTES)
+            if target_bytes is None:
+                findings.append(
+                    Finding(relative, "UNINSPECTABLE_SYMLINK", "<uninspectable-symlink>")
+                )
+                continue
+            try:
+                target = target_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                findings.append(
+                    Finding(relative, "UNINSPECTABLE_SYMLINK", "<uninspectable-symlink>")
+                )
+                continue
+            symlink_rule = _index_symlink_rule(
+                relative, target, allowlist, entry_by_path
+            )
+            if symlink_rule is not None:
+                findings.append(Finding(relative, symlink_rule, f"<{symlink_rule}>"))
+            continue
+
+        file_rule = _index_file_rule(
+            relative,
+            suffix,
+            root,
+            entry,
+            allowlist,
+            manifest_text,
+        )
+        if file_rule is not None:
+            findings.append(Finding(relative, file_rule, f"<{file_rule}>"))
+            continue
+
+        size = _index_blob_size(root, entry)
+        if size is None:
+            findings.append(
+                Finding(relative, "UNINSPECTABLE_TEXT", "<uninspectable-text>")
+            )
+            continue
+        if size > TEXT_LIMIT_BYTES:
+            findings.append(Finding(relative, "TEXT_TOO_LARGE", "<text-too-large>"))
+            continue
+        content = _index_blob(root, entry, limit=TEXT_LIMIT_BYTES)
+        if content is None:
+            findings.append(
+                Finding(relative, "UNINSPECTABLE_TEXT", "<uninspectable-text>")
+            )
+            continue
+        findings.extend(_content_findings_from_bytes(relative, content))
+
+    return findings
+
+
 def _nested_git_paths(root: Path) -> list[str]:
     findings: list[str] = []
+    tracked_prefixes = _tracked_directory_prefixes(root)
     for current_root, directories, filenames in os.walk(root, followlinks=False):
         current = Path(current_root)
         next_directories: list[str] = []
@@ -185,14 +355,56 @@ def _nested_git_paths(root: Path) -> list[str]:
                 if path != root / ".git":
                     findings.append(path.relative_to(root).as_posix())
                 continue
-            if not path.is_symlink():
-                next_directories.append(directory)
+            if path.is_symlink():
+                continue
+            relative = path.relative_to(root).as_posix()
+            if relative not in tracked_prefixes and _is_git_ignored(root, relative):
+                continue
+            next_directories.append(directory)
         directories[:] = next_directories
         for filename in sorted(filenames):
             path = current / filename
             if filename.casefold() == ".git" and path != root / ".git":
                 findings.append(path.relative_to(root).as_posix())
     return findings
+
+
+def _tracked_directory_prefixes(root: Path) -> set[str]:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--cached", "-z"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return set()
+    prefixes: set[str] = set()
+    for encoded_path in result.stdout.split(b"\0"):
+        if not encoded_path:
+            continue
+        path = Path(os.fsdecode(encoded_path))
+        for parent in path.parents:
+            if parent == Path("."):
+                break
+            prefixes.add(parent.as_posix())
+    return prefixes
+
+
+def _is_git_ignored(root: Path, relative: str) -> bool:
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "check-ignore",
+            "--quiet",
+            "--no-index",
+            "--",
+            relative,
+        ],
+        check=False,
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def _git_candidates(root: Path) -> list[Path] | None:
@@ -236,11 +448,36 @@ def _file_rule(
     return None
 
 
+def _index_file_rule(
+    relative: str,
+    suffix: str,
+    root: Path,
+    entry: _IndexEntry,
+    allowlist: tuple[str, ...],
+    manifest_text: str | None,
+) -> str | None:
+    if suffix in MEDIA_EXTENSIONS:
+        if _is_generated_index_fixture(
+            relative, root, entry, manifest_text
+        ):
+            return None
+        return "media_file"
+    if suffix in BINARY_EXTENSIONS:
+        if _is_generated_index_fixture(
+            relative, root, entry, manifest_text
+        ):
+            return None
+        return "binary_artifact"
+    if not _is_allowlisted(relative, allowlist):
+        return "not_allowlisted"
+    return None
+
+
 def _intrinsic_rule(relative: str, suffix: str) -> str | None:
     parts = tuple(part.casefold() for part in Path(relative).parts)
     name = parts[-1]
 
-    if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
+    if (name.startswith(".env") and name != ".env.example") or name == "operator.env":
         return "environment_file"
     if any(part in PRIVATE_PATH_PARTS for part in parts):
         return "private_path"
@@ -290,6 +527,41 @@ def _symlink_rule(
     return None
 
 
+def _index_symlink_rule(
+    relative: str,
+    target: str,
+    allowlist: tuple[str, ...],
+    entry_by_path: dict[str, _IndexEntry],
+) -> str | None:
+    suffix = Path(relative).suffix.lower()
+    if suffix in MEDIA_EXTENSIONS:
+        return "media_file"
+    if suffix in BINARY_EXTENSIONS:
+        return "binary_artifact"
+    if not _is_allowlisted(relative, allowlist):
+        return "not_allowlisted"
+    if _contains_user_home_path(target):
+        return "symlink_user_home_target"
+    if _is_absolute_target(target):
+        return "symlink_absolute_target"
+
+    target_path = Path(os.path.normpath(str(Path(relative).parent / target)))
+    if target_path.is_absolute() or target_path.parts[:1] == ("..",):
+        return "symlink_outside_root"
+    target_relative = target_path.as_posix()
+    target_rule = _intrinsic_rule(target_relative, target_path.suffix.lower())
+    if target_rule is not None:
+        return f"symlink_target_{target_rule}"
+    if not _is_allowlisted(target_relative, allowlist):
+        return "symlink_target_not_allowlisted"
+    target_entry = entry_by_path.get(target_relative)
+    if target_entry is None:
+        return "broken_symlink"
+    if target_entry.mode == "120000":
+        return "symlink_target_is_symlink"
+    return None
+
+
 def _is_absolute_target(target: str) -> bool:
     return target.startswith("/") or bool(re.match(r"(?i)^[a-z]:[\\/]", target))
 
@@ -333,6 +605,32 @@ def _is_generated_fixture(relative: str, path: Path, root: Path) -> bool:
     return False
 
 
+def _is_generated_index_fixture(
+    relative: str,
+    root: Path,
+    entry: _IndexEntry,
+    manifest_text: str | None,
+) -> bool:
+    fixture_root = "tests/fixtures-synthetic/"
+    if not relative.startswith(fixture_root) or manifest_text is None:
+        return False
+    content = _index_blob(root, entry, limit=TEXT_LIMIT_BYTES)
+    if content is None:
+        return False
+    expected_path = relative.removeprefix(fixture_root)
+    expected_hash = hashlib.sha256(content).hexdigest()
+    for line in manifest_text.splitlines():
+        parts = line.split()
+        if (
+            len(parts) >= 3
+            and parts[0] == expected_hash
+            and parts[1] == expected_path
+            and "generated=true" in parts[2:]
+        ):
+            return True
+    return False
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -350,6 +648,10 @@ def _content_findings(relative: str, path: Path) -> list[Finding]:
         return [Finding(relative, "UNINSPECTABLE_TEXT", "<uninspectable-text>")]
     if len(content) > TEXT_LIMIT_BYTES:
         return [Finding(relative, "TEXT_TOO_LARGE", "<text-too-large>")]
+    return _content_findings_from_bytes(relative, content)
+
+
+def _content_findings_from_bytes(relative: str, content: bytes) -> list[Finding]:
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:

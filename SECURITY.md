@@ -19,4 +19,14 @@ Use the project's private vulnerability-reporting channel when one is published.
 - Prefix dummy secret-shaped fixture values with `DUMMY_` and keep them under `tests/fixtures-synthetic/`; no other secret allowlisting is accepted.
 - Run the test suite, Ruff, the public-tree audit, and Gitleaks before requesting review. CI blocks changes when any gate fails and performs dependency review on pull requests.
 
+Use the same local audit entry point as CI:
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run python scripts/audit_public_tree.py .
+gitleaks git --redact --config .gitleaks.toml
+gitleaks git --redact --config .gitleaks-paths.toml
+```
+
 Security-sensitive changes require review before publication.

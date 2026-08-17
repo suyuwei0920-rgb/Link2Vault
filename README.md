@@ -6,7 +6,13 @@ Link2Vault（链接入库）是由来科技打造的单用户、自托管工具�
 
 ## Project status
 
-This repository is establishing its public foundation. Application code, deployment examples, and installation guidance will be added only after public-boundary review.
+Phase 1 provides a reviewed public foundation: a minimal `/healthz` API,
+repository and secret-scanning gates, and a hardened Docker Compose/Caddy
+deployment boundary. Link ingestion, transcription, provider integrations, and
+knowledge-vault workflows are not implemented yet.
+
+For the supported Ubuntu 22.04/24.04 deployment contract and local validation
+commands, see the [Docker installation guide](docs/install/docker.md).
 
 ## Public-boundary policy
 
@@ -18,7 +24,9 @@ Before contributing files, read [the public/private boundary](docs/public-bounda
 
 ## License and notices
 
-Link2Vault is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution and `THIRD_PARTY_NOTICES.md` when third-party dependencies are added.
+Link2Vault is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE)
+and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and the
+current direct-dependency inventory.
 
 ## Security
 

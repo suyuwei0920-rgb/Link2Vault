@@ -1,6 +1,7 @@
 # Environment files (keep the documented template only)
 .env*
 !.env.example
+deploy/docker/operator.env
 
 # Python caches and virtual environments
 __pycache__/

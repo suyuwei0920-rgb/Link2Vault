@@ -58,13 +58,13 @@ secretGroup = 1
     regexTarget = "secret"
     regexes = [
       '''(?i)^(?:https?://)?(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
-      '''(?i)^(?:https?://)?(?:api\.github\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|github\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+      '''(?i)^(?:https?://)?(?:api\.github\.com|docker\.io|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
 
 [[rules]]
 id = "assigned-network-domain"
 description = "Network domain in an explicit deployment assignment"
-regex = '''(?i)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9-]+\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59}))(?::[0-9]{1,5})?\b[^\t\r\n ;,)\]}]*'''
+regex = '''(?i)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host|domain)|base-url|api-host|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9-]+\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59}))(?::[0-9]{1,5})?\b[^\t\r\n ;,)\]}]*'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -72,14 +72,14 @@ secretGroup = 1
     regexTarget = "secret"
     regexes = [
       '''(?i)^(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
-      '''(?i)^(?:api\.github\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|github\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+      '''(?i)^(?:api\.github\.com|docker\.io|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
 
     [[rules.allowlists]]
     description = "Full unquoted source-chain assignment expressions"
     regexTarget = "match"
     regexes = [
-      '''(?i)^(?:[\s;,{(])?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.host)$''',
+      '''(?i)^(?:[\s;,{(])?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host|domain)|base-url|api-host|(?:[a-z0-9]+-)*domain)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.(?:host|domain))$''',
     ]
 
 [[rules]]
@@ -94,6 +94,21 @@ secretGroup = 1
     regexes = [
       '''(?i)^(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
       '''(?i)^api\.github\.com$''',
+    ]
+
+[[rules]]
+id = "bare-apex-domain"
+description = "Bare network domain in documentation or configuration"
+path = '''(?i)(?:^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:env(?:\.example)?|toml|ya?ml|json|ini|cfg|conf|properties)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
+regex = '''(?i)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9-]{2,59}))\b'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved examples and canonical public hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
+      '''(?i)^(?:api\.github\.com|docker\.io|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
 
 [[rules]]
@@ -123,6 +138,7 @@ targetRules = [
   "non-example-domain",
   "assigned-network-domain",
   "bare-deployment-domain",
+  "bare-apex-domain",
   "production-ipv4-literal",
   "generic-api-key",
   "openai-api-key",

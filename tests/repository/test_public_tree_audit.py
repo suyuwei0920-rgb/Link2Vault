@@ -58,7 +58,10 @@ def gitleaks_rule_findings(rule: dict[str, object], text: str) -> list[str]:
 
 
 def actual_gitleaks_findings(
-    tmp_path: Path, files: dict[str, str]
+    tmp_path: Path,
+    files: dict[str, str],
+    *,
+    config_name: str = ".gitleaks.toml",
 ) -> list[dict[str, object]]:
     executable = shutil.which("gitleaks")
     if executable is None:
@@ -82,7 +85,7 @@ def actual_gitleaks_findings(
             "--report-path",
             str(report_path),
             "--config",
-            str(REPOSITORY_ROOT / ".gitleaks.toml"),
+            str(REPOSITORY_ROOT / config_name),
             ".",
         ],
         cwd=source_root,
@@ -156,29 +159,41 @@ def test_audit_tree_rejects_private_files_and_paths(tmp_path: Path) -> None:
     assert findings["obsidian_vault/note.md"] == {"private_path"}
 
 
-def test_audit_tree_rejects_sensitive_source_values_and_redacts_credentials(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("content", "expected_rule", "expected_evidence"),
+    [
+        ("IP = '8" + ".8.8.8'\n", "ipv4_literal", "<ipv4-literal>"),
+        ("HOME = '/" + "Users/alice/private'\n", "user_home_path", "<user-home-path>"),
+        (
+            "TOKEN = 'sk-" + "abcdefghijklmnop'\n",
+            "credential",
+            "sk-a...mnop",
+        ),
+        (
+            "ENDPOINT = 'https://" + "api.customer-production.invalid/v1'\n",
+            "deployment_endpoint",
+            "<deployment-endpoint>",
+        ),
+        (
+            "BUCKET = 's3://" + "customer-private-bucket/exports'\n",
+            "bucket_identifier",
+            "<bucket-identifier>",
+        ),
+    ],
+)
+def test_audit_tree_rejects_each_sensitive_source_value_independently(
+    tmp_path: Path, content: str, expected_rule: str, expected_evidence: str
 ) -> None:
-    """Removing any content detector would expose operational or credential data."""
+    """Each content detector must catch its own unsafe input without masking."""
     write_allowlist(tmp_path)
-    secret = "sk-" + "abcdefgh" + "ijklmnop"
-    write_file(
-        tmp_path,
-        "apps/unsafe.py",
-        "IP = '8" + ".8.8.8'\n"
-        "HOME = '/" + "Users/alice/private'\n"
-        f"TOKEN = '{secret}'\n"
-        "ENDPOINT = 'https://" + "api.customer-production.invalid/v1'\n"
-        "BUCKET = 's3://" + "customer-private-bucket/exports'\n",
-    )
+    write_file(tmp_path, "apps/unsafe.py", content)
 
     findings = audit_tree(tmp_path)
-    rules = {finding.rule for finding in findings}
-    credential = next(finding for finding in findings if finding.rule == "credential")
 
-    assert {"ipv4_literal", "user_home_path", "credential", "deployment_endpoint", "bucket_identifier"} <= rules
-    assert credential.evidence == "sk-a...mnop"
-    assert secret not in credential.evidence
+    assert [(finding.rule, finding.evidence) for finding in findings] == [
+        (expected_rule, expected_evidence)
+    ]
+    assert "abcdefghijklmnop" not in repr(findings)
 
 
 def test_audit_tree_allows_only_hashed_generated_synthetic_media(tmp_path: Path) -> None:
@@ -236,6 +251,108 @@ def test_audit_tree_uses_git_candidates_and_only_reports_force_added_env_files(
     assert findings_by_path(tmp_path)[".env"] == {"environment_file"}
 
 
+def test_audit_tree_reads_unsafe_staged_blob_when_worktree_copy_is_safe(
+    tmp_path: Path,
+) -> None:
+    """Reading only worktree bytes would let a safe edit mask a staged secret."""
+    write_allowlist(tmp_path)
+    staged_secret = "sk-" + "abcdefghijklmnop"
+    write_file(tmp_path, "apps/config.py", f"TOKEN = '{staged_secret}'\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(
+        ["git", "add", ".public-allowlist", "apps/config.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+    write_file(tmp_path, "apps/config.py", "TOKEN = 'safe-placeholder'\n")
+
+    findings = [
+        finding for finding in audit_tree(tmp_path) if finding.path == "apps/config.py"
+    ]
+
+    assert [(finding.rule, finding.evidence) for finding in findings] == [
+        ("credential", "sk-a...mnop")
+    ]
+    assert staged_secret not in repr(findings)
+
+
+def test_audit_tree_reads_unsafe_worktree_copy_when_staged_blob_is_safe(
+    tmp_path: Path,
+) -> None:
+    """Scanning only the index would miss unsafe unstaged content."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "apps/config.py", "TOKEN = 'safe-placeholder'\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(
+        ["git", "add", ".public-allowlist", "apps/config.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+    worktree_secret = "sk-" + "qrstuvwxyzABCDEF"
+    write_file(tmp_path, "apps/config.py", f"TOKEN = '{worktree_secret}'\n")
+
+    findings = [
+        finding for finding in audit_tree(tmp_path) if finding.path == "apps/config.py"
+    ]
+
+    assert [(finding.rule, finding.evidence) for finding in findings] == [
+        ("credential", "sk-q...CDEF")
+    ]
+    assert worktree_secret not in repr(findings)
+
+
+def test_machine_allowlist_accepts_packages_and_only_docker_deployments(
+    tmp_path: Path,
+) -> None:
+    """A broad deploy entry or missing packages entry would violate policy."""
+    write_file(
+        tmp_path,
+        ".public-allowlist",
+        (REPOSITORY_ROOT / ".public-allowlist").read_text(encoding="utf-8"),
+    )
+    write_file(tmp_path, "packages/provider/__init__.py", "PUBLIC = True\n")
+    write_file(tmp_path, "deploy/docker/compose.override.yml", "services: {}\n")
+    write_file(tmp_path, "deploy/production/customer.yml", "services: {}\n")
+
+    findings = findings_by_path(tmp_path)
+
+    assert "packages/provider/__init__.py" not in findings
+    assert "deploy/docker/compose.override.yml" not in findings
+    assert findings["deploy/production/customer.yml"] == {"not_allowlisted"}
+
+
+def test_audit_tree_intrinsically_rejects_force_added_envrc(tmp_path: Path) -> None:
+    """Allowlist membership must never override the .env* deny rule."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".gitignore", ".env*\n")
+    write_file(tmp_path, "apps/.envrc", "export SAFE_PLACEHOLDER=yes\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-f", "apps/.envrc"], cwd=tmp_path, check=True)
+
+    assert findings_by_path(tmp_path)["apps/.envrc"] == {"environment_file"}
+
+
+def test_audit_tree_intrinsically_rejects_force_added_recordings_component(
+    tmp_path: Path,
+) -> None:
+    """Case variants of recordings directories must remain intrinsically private."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".gitignore", "apps/ReCoRdInGs/\n")
+    write_file(tmp_path, "apps/ReCoRdInGs/notes.txt", "private recording notes\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "add", "-f", "apps/ReCoRdInGs/notes.txt"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    assert findings_by_path(tmp_path)["apps/ReCoRdInGs/notes.txt"] == {
+        "private_path"
+    }
+
+
 def test_audit_tree_rejects_nested_git_control_directories_in_git_mode(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +370,29 @@ def test_audit_tree_rejects_nested_git_control_directories_in_git_mode(
         for finding in findings
     )
     assert not any(finding.path == ".git" for finding in findings)
+
+
+def test_nested_git_discovery_prunes_ignored_parents_but_keeps_public_paths(
+    tmp_path: Path,
+) -> None:
+    """Ruling A excludes ignored local trees without hiding public nested Git."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".gitignore", "scratch/\n")
+    write_file(tmp_path, "scratch/donor/.git/config", "[core]\n")
+    write_file(tmp_path, "apps/embedded/tracked.txt", "public marker\n")
+    write_file(tmp_path, "apps/embedded/.git/config", "[core]\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(
+        ["git", "add", ".public-allowlist", ".gitignore", "apps/embedded/tracked.txt"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    nested_git_paths = {
+        finding.path for finding in audit_tree(tmp_path) if finding.rule == "nested_git"
+    }
+
+    assert nested_git_paths == {"apps/embedded/.git"}
 
 
 def test_audit_tree_fails_closed_for_oversized_and_uninspectable_text(
@@ -326,28 +466,52 @@ def test_audit_tree_matches_private_names_and_extensions_case_insensitively(
     assert findings["apps/Transcripts/note.md"] == {"private_path"}
 
 
-def test_audit_tree_rejects_sensitive_urls_and_platform_path_variants(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("content", "expected_rules"),
+    [
+        (
+            "USERINFO = 'HTTPS://"
+            + "alice:private-password@api.internal.invalid'\n",
+            {"credential", "deployment_endpoint"},
+        ),
+        (
+            "IPV6 = 'https://" + "[2001:db8::dead]/v1'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "QUERY = 'https://" + "example.com/callback?token=private-token'\n",
+            {"credential"},
+        ),
+        (
+            "HOST_QUERY = 'HTTPS://" + "service.invalid?mode=live,'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "HOST_FRAGMENT = 'https://" + "service.invalid#fragment.'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "BUCKET = 'S3://" + "private-exports-bucket/data'\n",
+            {"bucket_identifier"},
+        ),
+        ("MAC_PATH = '/" + "USERS/alice/private'\n", {"user_home_path"}),
+        (
+            "WINDOWS_PATH = 'C:" + "\\\\Users\\\\alice\\\\private'\n",
+            {"user_home_path"},
+        ),
+    ],
+)
+def test_audit_tree_rejects_each_url_and_platform_path_variant_independently(
+    tmp_path: Path, content: str, expected_rules: set[str]
 ) -> None:
-    """Simplistic URL parsing would miss credentials, endpoints, and unsafe paths."""
+    """Each URL/path variant must trigger its own detector without masking."""
     write_allowlist(tmp_path)
-    write_file(
-        tmp_path,
-        "apps/unsafe_urls.py",
-        "USERINFO = 'HTTPS://" + "alice:private-password@api.internal.invalid'\n"
-        "IPV6 = 'https://" + "[2001:db8::dead]/v1'\n"
-        "QUERY = 'https://" + "example.com/callback?token=private-token'\n"
-        "HOST_QUERY = 'HTTPS://" + "service.invalid?mode=live,'\n"
-        "HOST_FRAGMENT = 'https://" + "service.invalid#fragment.'\n"
-        "BUCKET = 'S3://" + "private-exports-bucket/data'\n"
-        "MAC_PATH = '/" + "USERS/alice/private'\n"
-        "WINDOWS_PATH = 'C:" + "\\\\Users\\\\alice\\\\private'\n",
-    )
+    write_file(tmp_path, "apps/unsafe_urls.py", content)
 
     findings = audit_tree(tmp_path)
     rules = {finding.rule for finding in findings}
 
-    assert {"credential", "deployment_endpoint", "bucket_identifier", "user_home_path"} <= rules
+    assert rules == expected_rules
     assert all("alice" not in finding.evidence for finding in findings)
     assert all("private-password" not in finding.evidence for finding in findings)
 
@@ -405,27 +569,126 @@ def test_audit_tree_applies_rfc5737_url_exceptions_to_exact_networks(
         assert expected_rule in {finding.rule for finding in findings}
 
 
-def test_ci_workflow_runs_every_required_blocking_command() -> None:
-    """Removing a required CI command would leave unsafe changes unblocked."""
+def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
+    """Moving or weakening a gate would leave unsafe changes unblocked."""
     workflow_path = REPOSITORY_ROOT / ".github/workflows/ci.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
-    run_commands = {
-        step["run"]
-        for job in jobs.values()
-        for step in job.get("steps", [])
-        if "run" in step
+    required_jobs = {
+        "test",
+        "public-tree-audit",
+        "gitleaks",
+        "docker-contract",
+        "dependency-review",
     }
 
-    assert {"test", "public-tree-audit", "gitleaks", "dependency-review"} <= jobs.keys()
+    assert required_jobs <= jobs.keys()
+    assert workflow["permissions"] == {"contents": "read"}
+    assert all("permissions" not in job for job in jobs.values())
+    assert all(
+        "continue-on-error" not in step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+    )
+    assert all("continue-on-error" not in job for job in jobs.values())
+
+    commands_by_job = {
+        job_name: {
+            step["run"] for step in job["steps"] if isinstance(step.get("run"), str)
+        }
+        for job_name, job in jobs.items()
+    }
+    assert {"uv run pytest", "uv run ruff check ."} <= commands_by_job["test"]
+    assert "uv run python scripts/audit_public_tree.py ." in commands_by_job[
+        "public-tree-audit"
+    ]
     assert {
-        "uv run pytest",
-        "uv run ruff check .",
-        "python scripts/audit_public_tree.py .",
         "uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v",
         "gitleaks git --redact --config .gitleaks.toml",
         "gitleaks git --redact --config .gitleaks-paths.toml",
-    } <= run_commands
+    } <= commands_by_job["gitleaks"]
+    assert {
+        "docker version",
+        "docker compose version",
+        "docker info",
+        "uv run pytest tests/deploy/test_compose_contract.py -v",
+    } <= commands_by_job["docker-contract"]
+
+    gitleaks_checkout = next(
+        step
+        for step in jobs["gitleaks"]["steps"]
+        if step.get("uses") == "actions/checkout@v7"
+    )
+    assert gitleaks_checkout["with"] == {
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    assert jobs["dependency-review"]["if"] == "github.event_name == 'pull_request'"
+
+    allowed_action_pins = {
+        "actions/checkout@v7",
+        "actions/setup-python@v6",
+        "astral-sh/setup-uv@v9",
+        "actions/dependency-review-action@v5",
+    }
+    used_actions = {
+        step["uses"]
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if "uses" in step
+    }
+    assert used_actions <= allowed_action_pins
+    assert all(
+        "@" in action and not action.endswith(("@main", "@master"))
+        for action in used_actions
+    )
+
+    checkout_steps = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses") == "actions/checkout@v7"
+    ]
+    assert checkout_steps
+    assert all(step["with"]["persist-credentials"] is False for step in checkout_steps)
+    setup_python_steps = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses") == "actions/setup-python@v6"
+    ]
+    assert setup_python_steps
+    assert all(step["with"] == {"python-version": "3.12"} for step in setup_python_steps)
+    setup_uv_steps = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses") == "astral-sh/setup-uv@v9"
+    ]
+    assert setup_uv_steps
+    assert all(
+        step["with"] == {"version": "0.12.1", "enable-cache": True}
+        for step in setup_uv_steps
+    )
+    install_gitleaks = next(
+        step
+        for step in jobs["gitleaks"]["steps"]
+        if step.get("name") == "Install checksum-verified Gitleaks"
+    )["run"]
+    assert "v8.30.1" in install_gitleaks
+    assert "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" in install_gitleaks
+
+
+def test_packaging_declares_bounded_backend_and_direct_yaml_dependency() -> None:
+    """Unbounded build tooling or a transitive YAML import breaks reproducibility."""
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as project_file:
+        project = tomllib.load(project_file)
+
+    assert project["build-system"] == {
+        "requires": ["hatchling==1.32.0"],
+        "build-backend": "hatchling.build",
+    }
+    assert "pyyaml>=6,<7" in project["dependency-groups"]["dev"]
 
 
 def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> None:
@@ -521,6 +784,35 @@ def test_gitleaks_assignment_rule_supports_composite_keys(
     assert gitleaks_rule_findings(bare_rule, content) == []
 
 
+@pytest.mark.parametrize(
+    ("content", "expected_secret"),
+    [
+        ("DOMAIN=customer." + "com", "customer." + "com"),
+        ("PUBLIC_DOMAIN=customer." + "com", "customer." + "com"),
+        ("customer-domain: customer." + "com", "customer." + "com"),
+    ],
+)
+def test_gitleaks_assignment_rule_supports_strict_domain_keys(
+    content: str, expected_secret: str
+) -> None:
+    """Omitting exact/composite DOMAIN keys would miss common deployment config."""
+    rule = gitleaks_rule("assigned-network-domain")
+
+    assert gitleaks_rule_findings(rule, content) == [expected_secret]
+
+
+def test_gitleaks_assignment_rule_does_not_match_domain_name_substrings() -> None:
+    """DOMAIN support must not turn arbitrary source identifiers into secrets."""
+    rule = gitleaks_rule("assigned-network-domain")
+
+    for source_expression in (
+        "RANDOMDOMAIN=customer." + "com",
+        "SUBDOMAIN=customer." + "com",
+        "object.domain=customer." + "com",
+    ):
+        assert gitleaks_rule_findings(rule, source_expression) == []
+
+
 def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
     """Safe source chains need exact exceptions without weakening domain detection."""
     rule = gitleaks_rule("assigned-network-domain")
@@ -530,6 +822,7 @@ def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
         "PUBLIC_ORIGIN=window." + "location.origin",
         "SERVICE_SERVER=config." + "server",
         "KB_HOST=settings." + "host",
+        "PUBLIC_DOMAIN=settings." + "domain",
         "PUBLIC_ORIGIN = window." + "location.origin;",
         "SERVICE_SERVER: config." + "server,",
         "configure(KB_HOST=settings." + "host)",
@@ -545,6 +838,7 @@ def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
         ("'SERVICE_SERVER=config." + "server'", "config.server"),
         ("KB_HOST=settings." + "host/v1", "settings.host"),
         ("SERVICE_SERVER=config." + "server?mode=live", "config.server"),
+        ('PUBLIC_DOMAIN="settings.' + 'domain"', "settings.domain"),
     ):
         assert gitleaks_rule_findings(rule, unsafe_literal) == [expected_secret]
 
@@ -636,6 +930,54 @@ def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
     assert actual_gitleaks_findings(tmp_path, {"safe.txt": safe_content}) == []
 
 
+def test_actual_gitleaks_blocks_domain_keys_and_docs_config_apex_domains(
+    tmp_path: Path,
+) -> None:
+    """Apex domains must be caught in strict keys, documentation, and config."""
+    apex = "customer." + "com"
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "apps/api/settings.py": (
+                "DOMAIN=" + apex + "\nPUBLIC_DOMAIN=portal." + "example.invalid\n"
+            ),
+            "apps/api/prose.py": "EXAMPLE = 'The customer." + "com format'\n",
+            "docs/deployment.md": "Production tenant: " + apex + "\n",
+            "deploy/docker/settings.toml": "site = \"" + apex + "\"\n",
+        },
+    )
+
+    assert sorted(
+        (finding["File"], finding["StartLine"], finding["RuleID"])
+        for finding in findings
+    ) == [
+        ("apps/api/settings.py", 1, "assigned-network-domain"),
+        ("deploy/docker/settings.toml", 1, "bare-apex-domain"),
+        ("docs/deployment.md", 1, "bare-apex-domain"),
+    ]
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert apex not in json.dumps(findings)
+
+
+def test_actual_gitleaks_bare_apex_rule_allows_reserved_and_public_hosts(
+    tmp_path: Path,
+) -> None:
+    """Public documentation hosts must remain usable in prose and config."""
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {
+            "docs/hosts.md": (
+                "Examples: example.com, example.net, example.org, github.com, "
+                "opensource.org, starlette.io, ghcr.io. Files: operator.env, "
+                "compose.yml, settings.toml.\n"
+            ),
+            "deploy/docker/public.toml": "registry = \"pypi.org\"\n",
+            "apps/api/Dockerfile": "FROM ghcr.io/astral-sh/uv:0.12.1\n",
+            "apps/api/prose.py": "FORMAT = 'customer." + "com is documentation'\n",
+        },
+    ) == []
+
+
 def test_actual_gitleaks_requires_dummy_prefix_and_fixture_path(
     tmp_path: Path,
 ) -> None:
@@ -657,6 +999,56 @@ def test_actual_gitleaks_requires_dummy_prefix_and_fixture_path(
         "tests/fixtures-synthetic/non-dummy.txt",
     ]
     assert all(finding["RuleID"] == "assigned-network-domain" for finding in findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+
+
+def test_actual_gitleaks_apex_allowlist_requires_dummy_prefix_and_fixture_path(
+    tmp_path: Path,
+) -> None:
+    """The apex-domain exception retains DUMMY_ path-and-value AND semantics."""
+    domain = "customer." + "com"
+    dummy_domain = "DUMMY_" + domain
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.toml": "note = '" + dummy_domain + "'\n",
+            "tests/fixtures-synthetic/non-dummy.toml": "note = '" + domain + "'\n",
+            "docs/dummy-outside-fixtures.md": "Use " + dummy_domain + " here.\n",
+        },
+    )
+
+    assert sorted(finding["File"] for finding in findings) == [
+        "docs/dummy-outside-fixtures.md",
+        "tests/fixtures-synthetic/non-dummy.toml",
+    ]
+    assert all(finding["RuleID"] == "bare-apex-domain" for finding in findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+
+
+def test_actual_gitleaks_path_policy_requires_dummy_prefix_and_fixture_path(
+    tmp_path: Path,
+) -> None:
+    """The isolated path policy must preserve its path-and-value AND exception."""
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.txt": (
+                "HOME=DUMMY_/" + "Users/example/project\n"
+            ),
+            "tests/fixtures-synthetic/non-dummy.txt": (
+                "HOME=/" + "Users/example/project\n"
+            ),
+            "outside-fixtures.txt": "HOME=DUMMY_/" + "Users/example/project\n",
+        },
+        config_name=".gitleaks-paths.toml",
+    )
+
+    assert sorted(finding["File"] for finding in findings) == [
+        "outside-fixtures.txt",
+        "tests/fixtures-synthetic/non-dummy.txt",
+    ]
+    assert all(finding["RuleID"] == "macos-user-home-path" for finding in findings)
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
 
 
