@@ -1119,83 +1119,124 @@ def test_actual_gitleaks_apex_domain_handles_case_quotes_punctuation_and_many_pe
     assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
 
 
-@pytest.mark.parametrize("separator", [" ", ",", ";"], ids=["space", "comma", "semicolon"])
-def test_actual_gitleaks_apex_domain_reports_both_with_one_separator(
-    tmp_path: Path, separator: str
-) -> None:
-    """Consuming the only separator must not hide the following prose domain."""
-    unsafe_domains = [
+ADJACENT_DOMAIN_CASES = (
+    pytest.param(
+        "docs/adjacent.md",
         "customer." + "finance",
         "portal.customer." + "technology",
-    ]
+        "bare-apex-domain",
+        "adjacent-bare-apex-domain",
+        id="bare-prose",
+    ),
+    pytest.param(
+        "apps/domain-settings.py",
+        "DOMAIN=customer." + "finance",
+        "PUBLIC_DOMAIN=portal." + "technology",
+        "assigned-domain-name",
+        "adjacent-assigned-domain-name",
+        id="domain-assignments",
+    ),
+    pytest.param(
+        "apps/network-settings.py",
+        "HOST=api.customer." + "com",
+        "ORIGIN=portal.customer." + "com",
+        "assigned-network-domain",
+        "adjacent-assigned-network-domain",
+        id="network-assignments",
+    ),
+)
 
+
+@pytest.mark.parametrize(
+    ("path", "first", "second", "owning_rule", "companion_rule"),
+    ADJACENT_DOMAIN_CASES,
+)
+@pytest.mark.parametrize(
+    "separator", [" ", ",", ";"], ids=["space", "comma", "semicolon"]
+)
+def test_actual_gitleaks_apex_domain_reports_exactly_two_with_one_separator(
+    tmp_path: Path,
+    path: str,
+    first: str,
+    second: str,
+    owning_rule: str,
+    companion_rule: str,
+    separator: str,
+) -> None:
+    """The companion owns only the second value hidden by one separator."""
     findings = actual_gitleaks_findings(
         tmp_path,
-        {"docs/adjacent.md": separator.join(unsafe_domains) + "\n"},
+        {path: first + separator + second + "\n"},
     )
 
     assert len(findings) == 2
+    assert {finding["RuleID"] for finding in findings} == {
+        owning_rule,
+        companion_rule,
+    }
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["RuleID"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in findings
+        }
+    ) == len(findings)
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
     report = json.dumps(findings)
-    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+    assert first.split("=", 1)[-1] not in report
+    assert second.split("=", 1)[-1] not in report
 
 
-def test_actual_gitleaks_apex_domain_reports_both_adjacent_domain_assignments(
+@pytest.mark.parametrize(
+    ("path", "first", "second", "owning_rule", "companion_rule"),
+    ADJACENT_DOMAIN_CASES,
+)
+@pytest.mark.parametrize(
+    "separator",
+    [", ", "; ", "  ", "\t\t"],
+    ids=["comma-space", "semicolon-space", "repeated-spaces", "repeated-tabs"],
+)
+def test_actual_gitleaks_apex_domain_avoids_companion_duplicates(
     tmp_path: Path,
+    path: str,
+    first: str,
+    second: str,
+    owning_rule: str,
+    companion_rule: str,
+    separator: str,
 ) -> None:
-    """A semicolon between DOMAIN assignments must leave both values visible."""
-    unsafe_domains = [
-        "customer." + "finance",
-        "portal." + "technology",
-    ]
-    content = (
-        "DOMAIN="
-        + unsafe_domains[0]
-        + ";PUBLIC_DOMAIN="
-        + unsafe_domains[1]
-        + "\n"
+    """Multiple separators leave both values visible to the owning rule alone."""
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {path: first + separator + second + "\n"},
     )
-
-    findings = actual_gitleaks_findings(tmp_path, {"apps/settings.py": content})
 
     assert len(findings) == 2
-    assert all(
-        finding["RuleID"]
-        in {"assigned-domain-name", "adjacent-assigned-domain-name"}
-        for finding in findings
-    )
+    assert {finding["RuleID"] for finding in findings} == {owning_rule}
+    assert companion_rule not in {finding["RuleID"] for finding in findings}
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["RuleID"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in findings
+        }
+    ) == len(findings)
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
     report = json.dumps(findings)
-    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
-
-
-def test_actual_gitleaks_apex_domain_reports_both_adjacent_network_assignments(
-    tmp_path: Path,
-) -> None:
-    """A semicolon between network assignments must leave both values visible."""
-    unsafe_domains = [
-        "api.customer." + "com",
-        "portal.customer." + "com",
-    ]
-    content = (
-        "HOST="
-        + unsafe_domains[0]
-        + ";ORIGIN="
-        + unsafe_domains[1]
-        + "\n"
-    )
-
-    findings = actual_gitleaks_findings(tmp_path, {"apps/settings.py": content})
-
-    assert len(findings) == 2
-    assert all(
-        finding["RuleID"]
-        in {"assigned-network-domain", "adjacent-assigned-network-domain"}
-        for finding in findings
-    )
-    assert all(finding["Secret"] == "REDACTED" for finding in findings)
-    report = json.dumps(findings)
-    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+    assert first.split("=", 1)[-1] not in report
+    assert second.split("=", 1)[-1] not in report
 
 
 def test_actual_gitleaks_apex_domain_deployment_prefix_supports_arbitrary_tlds(
@@ -1525,8 +1566,39 @@ def test_actual_gitleaks_apex_domain_requires_valid_dns_label_boundaries(
     ) == []
 
 
+@pytest.mark.parametrize(
+    ("bare_separator", "assignment_separator", "expected_rules"),
+    [
+        pytest.param(
+            " ",
+            ";",
+            {
+                "adjacent-assigned-network-domain",
+                "adjacent-assigned-domain-name",
+                "adjacent-bare-apex-domain",
+                "assigned-network-domain",
+                "assigned-domain-name",
+                "bare-apex-domain",
+            },
+            id="single-separator-companions",
+        ),
+        pytest.param(
+            ", ",
+            "; ",
+            {
+                "assigned-domain-name",
+                "assigned-network-domain",
+                "bare-apex-domain",
+            },
+            id="multiple-separator-owning-rules",
+        ),
+    ],
+)
 def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
     tmp_path: Path,
+    bare_separator: str,
+    assignment_separator: str,
+    expected_rules: set[str],
 ) -> None:
     """New adjacent rules retain the fixture-path AND DUMMY_ contract."""
     domains = ["customer." + "finance", "portal." + "technology"]
@@ -1535,27 +1607,60 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
     findings = actual_gitleaks_findings(
         tmp_path,
         {
-            "tests/fixtures-synthetic/safe.md": " ".join(dummy_domains) + "\n",
-            "tests/fixtures-synthetic/non-dummy.md": " ".join(domains) + "\n",
-            "docs/dummy-outside-fixtures.md": " ".join(dummy_domains) + "\n",
+            "tests/fixtures-synthetic/safe.md": (
+                bare_separator.join(dummy_domains) + "\n"
+            ),
+            "tests/fixtures-synthetic/non-dummy.md": (
+                bare_separator.join(domains) + "\n"
+            ),
+            "docs/dummy-outside-fixtures.md": (
+                bare_separator.join(dummy_domains) + "\n"
+            ),
             "tests/fixtures-synthetic/safe.py": (
                 "DOMAIN="
                 + dummy_domains[0]
-                + ";PUBLIC_DOMAIN="
+                + assignment_separator
+                + "PUBLIC_DOMAIN="
                 + dummy_domains[1]
                 + "\n"
             ),
             "tests/fixtures-synthetic/non-dummy.py": (
                 "DOMAIN="
                 + domains[0]
-                + ";PUBLIC_DOMAIN="
+                + assignment_separator
+                + "PUBLIC_DOMAIN="
                 + domains[1]
                 + "\n"
             ),
             "apps/dummy-outside-fixtures.py": (
                 "DOMAIN="
                 + dummy_domains[0]
-                + ";PUBLIC_DOMAIN="
+                + assignment_separator
+                + "PUBLIC_DOMAIN="
+                + dummy_domains[1]
+                + "\n"
+            ),
+            "tests/fixtures-synthetic/safe-network.py": (
+                "HOST="
+                + dummy_domains[0]
+                + assignment_separator
+                + "ORIGIN="
+                + dummy_domains[1]
+                + "\n"
+            ),
+            "tests/fixtures-synthetic/non-dummy-network.py": (
+                "HOST="
+                + domains[0]
+                + assignment_separator
+                + "ORIGIN="
+                + domains[1]
+                + "\n"
+            ),
+            "apps/dummy-network-outside-fixtures.py": (
+                "HOST="
+                + dummy_domains[0]
+                + assignment_separator
+                + "ORIGIN="
                 + dummy_domains[1]
                 + "\n"
             ),
@@ -1563,22 +1668,24 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
     )
 
     assert sorted(finding["File"] for finding in findings) == [
+        "apps/dummy-network-outside-fixtures.py",
+        "apps/dummy-network-outside-fixtures.py",
         "apps/dummy-outside-fixtures.py",
         "apps/dummy-outside-fixtures.py",
         "docs/dummy-outside-fixtures.md",
         "docs/dummy-outside-fixtures.md",
+        "tests/fixtures-synthetic/non-dummy-network.py",
+        "tests/fixtures-synthetic/non-dummy-network.py",
         "tests/fixtures-synthetic/non-dummy.md",
         "tests/fixtures-synthetic/non-dummy.md",
         "tests/fixtures-synthetic/non-dummy.py",
         "tests/fixtures-synthetic/non-dummy.py",
     ]
-    assert {finding["RuleID"] for finding in findings} == {
-        "adjacent-assigned-domain-name",
-        "adjacent-bare-apex-domain",
-        "assigned-domain-name",
-        "bare-apex-domain",
-    }
+    assert {finding["RuleID"] for finding in findings} == expected_rules
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains)
+    assert all(dummy_domain not in report for dummy_domain in dummy_domains)
 
 
 def test_actual_gitleaks_apex_domain_allowlist_requires_dummy_prefix_and_fixture_path(

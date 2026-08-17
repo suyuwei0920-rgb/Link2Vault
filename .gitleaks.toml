@@ -85,7 +85,7 @@ secretGroup = 1
 [[rules]]
 id = "adjacent-assigned-network-domain"
 description = "Second network domain in adjacent deployment assignments"
-regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -100,7 +100,7 @@ secretGroup = 1
     description = "Unquoted source-chain value in the second adjacent assignment"
     regexTarget = "match"
     regexes = [
-      '''(?im)^\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.host)[\t ]*[;,) ]?$''',
+      '''(?im)^\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;](?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.host)[\t ]*[;,) ]?$''',
     ]
 
 [[rules]]
@@ -120,7 +120,7 @@ secretGroup = 1
 [[rules]]
 id = "adjacent-assigned-domain-name"
 description = "Second domain in adjacent DOMAIN assignments"
-regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -188,7 +188,7 @@ secretGroup = 1
 id = "adjacent-bare-apex-domain"
 description = "Second bare domain separated by one prose delimiter"
 path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;]+((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;]((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
 secretGroup = 1
 
     [[rules.allowlists]]
