@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -179,12 +178,10 @@ def test_non_root_caddy_strips_packaged_file_capability_before_exec() -> None:
     assert any("exec" in mount for mount in caddy["tmpfs"] if mount.startswith("/tmp:"))
 
 
-def test_caddy_uses_the_documented_optional_environment_file() -> None:
+def test_caddy_requires_the_documented_environment_file() -> None:
     caddy = load_compose()["services"]["caddy"]
 
-    assert caddy["env_file"] == [
-        {"path": "${LINK2VAULT_ENV_FILE:-.env}", "required": False}
-    ]
+    assert caddy["env_file"] == [".env"]
     assert "environment" not in caddy
 
 
@@ -194,19 +191,19 @@ def test_compose_loads_caddy_values_from_the_configured_environment_file(
     if shutil.which("docker") is None:
         pytest.skip("Docker Compose v2 is required for the deployment contract")
 
-    environment_file = tmp_path / "runtime.env"
+    temporary_compose = tmp_path / "deploy/docker/compose.yml"
+    temporary_compose.parent.mkdir(parents=True)
+    shutil.copy2(COMPOSE_PATH, temporary_compose)
+    environment_file = temporary_compose.parent / ".env"
     environment_file.write_text(
         "LINK2VAULT_ADMIN_USER=test-admin\n"
         "LINK2VAULT_ADMIN_PASSWORD_HASH=DUMMY_NOT_A_REAL_HASH\n"
         "LINK2VAULT_MAX_UPLOAD_MB=1\n",
         encoding="utf-8",
     )
-    environment = os.environ.copy()
-    environment["LINK2VAULT_ENV_FILE"] = str(environment_file)
     completed = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_PATH), "config"],
-        cwd=REPOSITORY_ROOT,
-        env=environment,
+        ["docker", "compose", "-f", str(temporary_compose), "config"],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         check=False,
@@ -221,6 +218,26 @@ def test_compose_loads_caddy_values_from_the_configured_environment_file(
         "LINK2VAULT_ADMIN_USER": "test-admin",
         "LINK2VAULT_MAX_UPLOAD_MB": "1",
     }
+
+
+def test_compose_rejects_missing_operator_environment_file(tmp_path: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("Docker Compose v2 is required for the deployment contract")
+
+    temporary_compose = tmp_path / "deploy/docker/compose.yml"
+    temporary_compose.parent.mkdir(parents=True)
+    shutil.copy2(COMPOSE_PATH, temporary_compose)
+    completed = subprocess.run(
+        ["docker", "compose", "-f", str(temporary_compose), "config", "--quiet"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert ".env" in completed.stderr
+    assert "not found" in completed.stderr.lower()
 
 
 def test_dockerignore_exports_only_the_required_build_inputs(tmp_path: Path) -> None:
@@ -239,6 +256,7 @@ def test_dockerignore_exports_only_the_required_build_inputs(tmp_path: Path) -> 
         "uv.lock": "version = 1\n",
         "apps/api/link2vault/__init__.py": "__version__ = '0.0.0'\n",
         "apps/api/link2vault/main.py": "APP = 'test'\n",
+        "apps/api/link2vault/subpackage/worker.py": "WORKER = 'test'\n",
     }
     excluded_files = {
         ".git/config": "private repository metadata\n",
@@ -256,6 +274,18 @@ def test_dockerignore_exports_only_the_required_build_inputs(tmp_path: Path) -> 
         "docs/guide.md": "unrelated documentation\n",
         "tests/test_unrelated.py": "unrelated test\n",
         "unrelated/source.py": "unrelated source\n",
+        "apps/api/link2vault/.env": "TOKEN=private\n",
+        "apps/api/link2vault/nested/.env.local": "TOKEN=private\n",
+        "apps/api/link2vault/private.pem": "private signing material\n",
+        "apps/api/link2vault/nested/secret.key": "private signing material\n",
+        "apps/api/link2vault/recording.m4a": "private recording\n",
+        "apps/api/link2vault/nested/audio.wav": "private audio\n",
+        "apps/api/link2vault/release.zip": "private archive\n",
+        "apps/api/link2vault/mobile.apk": "private application\n",
+        "apps/api/link2vault/__pycache__/main.cpython-312.pyc": "private cache\n",
+        "apps/api/link2vault/.pytest_cache/v/cache/nodeids": "private cache\n",
+        "apps/api/link2vault/transcript.vtt": "private transcript\n",
+        "apps/api/link2vault/database.sqlite": "private database\n",
     }
     for relative_path, content in (required_files | excluded_files).items():
         path = context / relative_path
