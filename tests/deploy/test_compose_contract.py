@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
 import shutil
+import socket
 import subprocess
+import time
+import uuid
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import pytest
 import yaml
@@ -14,6 +20,12 @@ CADDYFILE_PATH = REPOSITORY_ROOT / "deploy/docker/Caddyfile.example"
 ENV_EXAMPLE_PATH = REPOSITORY_ROOT / "deploy/docker/.env.example"
 DOCKERFILE_PATH = REPOSITORY_ROOT / "apps/api/Dockerfile"
 DOCKERIGNORE_PATH = REPOSITORY_ROOT / ".dockerignore"
+SAFE_DEFAULT_ADMIN_HASH = (
+    "$2a$14$EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+)
+RENDERED_SAFE_DEFAULT_ADMIN_HASH = (
+    "$$2a$$14$$EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+)
 
 
 def load_compose() -> dict[str, object]:
@@ -178,23 +190,48 @@ def test_non_root_caddy_strips_packaged_file_capability_before_exec() -> None:
     assert any("exec" in mount for mount in caddy["tmpfs"] if mount.startswith("/tmp:"))
 
 
-def test_caddy_requires_the_documented_environment_file() -> None:
+def test_caddy_uses_only_compose_v2_compatible_interpolated_environment() -> None:
     caddy = load_compose()["services"]["caddy"]
 
-    assert caddy["env_file"] == [".env"]
-    assert "environment" not in caddy
+    assert "env_file" not in caddy
+    assert caddy["environment"] == {
+        "LINK2VAULT_ADMIN_USER": "${LINK2VAULT_ADMIN_USER:-example-admin}",
+        "LINK2VAULT_ADMIN_PASSWORD_HASH": (
+            "${LINK2VAULT_ADMIN_PASSWORD_HASH:-"
+            "$$2a$$14$$EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE}"
+        ),
+        "LINK2VAULT_MAX_UPLOAD_MB": "${LINK2VAULT_MAX_UPLOAD_MB:-1024}",
+    }
 
 
-def test_compose_loads_caddy_values_from_the_configured_environment_file(
-    tmp_path: Path,
-) -> None:
+def test_clean_checkout_compose_config_resolves_safe_caddy_defaults() -> None:
     if shutil.which("docker") is None:
         pytest.skip("Docker Compose v2 is required for the deployment contract")
 
-    temporary_compose = tmp_path / "deploy/docker/compose.yml"
-    temporary_compose.parent.mkdir(parents=True)
-    shutil.copy2(COMPOSE_PATH, temporary_compose)
-    environment_file = temporary_compose.parent / ".env"
+    completed = subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE_PATH), "config"],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    caddy_environment = yaml.safe_load(completed.stdout)["services"]["caddy"][
+        "environment"
+    ]
+    assert caddy_environment == {
+        "LINK2VAULT_ADMIN_PASSWORD_HASH": RENDERED_SAFE_DEFAULT_ADMIN_HASH,
+        "LINK2VAULT_ADMIN_USER": "example-admin",
+        "LINK2VAULT_MAX_UPLOAD_MB": "1024",
+    }
+
+
+def test_explicit_env_file_overrides_reach_caddy(tmp_path: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("Docker Compose v2 is required for the deployment contract")
+
+    environment_file = tmp_path / "operator.env"
     environment_file.write_text(
         "LINK2VAULT_ADMIN_USER=test-admin\n"
         "LINK2VAULT_ADMIN_PASSWORD_HASH=DUMMY_NOT_A_REAL_HASH\n"
@@ -202,8 +239,16 @@ def test_compose_loads_caddy_values_from_the_configured_environment_file(
         encoding="utf-8",
     )
     completed = subprocess.run(
-        ["docker", "compose", "-f", str(temporary_compose), "config"],
-        cwd=tmp_path,
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            str(environment_file),
+            "-f",
+            str(COMPOSE_PATH),
+            "config",
+        ],
+        cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -220,24 +265,152 @@ def test_compose_loads_caddy_values_from_the_configured_environment_file(
     }
 
 
-def test_compose_rejects_missing_operator_environment_file(tmp_path: Path) -> None:
+def test_empty_admin_env_file_values_remain_fail_closed(tmp_path: Path) -> None:
     if shutil.which("docker") is None:
         pytest.skip("Docker Compose v2 is required for the deployment contract")
 
-    temporary_compose = tmp_path / "deploy/docker/compose.yml"
-    temporary_compose.parent.mkdir(parents=True)
-    shutil.copy2(COMPOSE_PATH, temporary_compose)
+    environment_file = tmp_path / "empty-admin.env"
+    environment_file.write_text(
+        "LINK2VAULT_ADMIN_USER=\n"
+        "LINK2VAULT_ADMIN_PASSWORD_HASH=\n"
+        "LINK2VAULT_MAX_UPLOAD_MB=\n",
+        encoding="utf-8",
+    )
     completed = subprocess.run(
-        ["docker", "compose", "-f", str(temporary_compose), "config", "--quiet"],
-        cwd=tmp_path,
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            str(environment_file),
+            "-f",
+            str(COMPOSE_PATH),
+            "config",
+        ],
+        cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
 
-    assert completed.returncode != 0
-    assert ".env" in completed.stderr
-    assert "not found" in completed.stderr.lower()
+    assert completed.returncode == 0, completed.stderr
+    caddy_environment = yaml.safe_load(completed.stdout)["services"]["caddy"][
+        "environment"
+    ]
+    assert caddy_environment == {
+        "LINK2VAULT_ADMIN_PASSWORD_HASH": RENDERED_SAFE_DEFAULT_ADMIN_HASH,
+        "LINK2VAULT_ADMIN_USER": "example-admin",
+        "LINK2VAULT_MAX_UPLOAD_MB": "1024",
+    }
+
+
+def test_configured_compose_enforces_auth_and_upload_limit(tmp_path: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("Docker Compose v2 is required for the runtime contract")
+    daemon = subprocess.run(
+        ["docker", "info"], capture_output=True, text=True, check=False
+    )
+    if daemon.returncode != 0:
+        pytest.skip(f"Docker daemon is unavailable: {daemon.stderr.strip()}")
+
+    password = "phase1-contract-test-password"
+    password_hash = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "caddy:2.10.2-alpine",
+            "caddy",
+            "hash-password",
+            "--plaintext",
+            password,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        host_port = listener.getsockname()[1]
+    environment_file = tmp_path / "runtime.env"
+    environment_file.write_text(
+        "LINK2VAULT_ADMIN_USER=contract-admin\n"
+        f"LINK2VAULT_ADMIN_PASSWORD_HASH='{password_hash}'\n"
+        "LINK2VAULT_MAX_UPLOAD_MB=1\n"
+        f"LINK2VAULT_HTTP_PORT={host_port}\n",
+        encoding="utf-8",
+    )
+    project_name = f"link2vault-contract-{uuid.uuid4().hex[:12]}"
+    compose = [
+        "docker",
+        "compose",
+        "--env-file",
+        str(environment_file),
+        "--project-name",
+        project_name,
+        "-f",
+        str(COMPOSE_PATH),
+    ]
+    started = subprocess.run(
+        [*compose, "up", "-d", "--build"],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    base_url = f"http://127.0.0.1:{host_port}"
+    try:
+        assert started.returncode == 0, started.stderr
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urlopen(f"{base_url}/healthz", timeout=2) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    logs = subprocess.run(
+                        [*compose, "logs", "--no-color"],
+                        cwd=REPOSITORY_ROOT,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    pytest.fail(f"stack did not become healthy:\n{logs.stdout}")
+                time.sleep(0.25)
+
+        with pytest.raises(HTTPError) as unauthorized:
+            urlopen(f"{base_url}/admin/example", timeout=5)
+        assert unauthorized.value.code == 401
+
+        authorization = base64.b64encode(
+            f"contract-admin:{password}".encode()
+        ).decode()
+        authorized_request = Request(
+            f"{base_url}/admin/example",
+            headers={"Authorization": f"Basic {authorization}"},
+        )
+        with pytest.raises(HTTPError) as authorized:
+            urlopen(authorized_request, timeout=5)
+        assert authorized.value.code == 404
+        assert json.loads(authorized.value.read()) == {"detail": "Not Found"}
+
+        oversize_request = Request(
+            f"{base_url}/ingest/example",
+            data=b"x" * 1_000_001,
+            headers={"Content-Type": "application/octet-stream"},
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as oversize:
+            urlopen(oversize_request, timeout=10)
+        assert oversize.value.code == 413
+    finally:
+        subprocess.run(
+            [*compose, "down", "--volumes"],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 def test_dockerignore_exports_only_the_required_build_inputs(tmp_path: Path) -> None:

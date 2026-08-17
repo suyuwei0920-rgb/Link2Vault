@@ -7,15 +7,17 @@ container port directly.
 
 ## Configure
 
-From the repository root, create an ignored runtime environment file:
+The clean checkout starts with fail-closed example credentials and a 1024 MB
+request limit. For operator overrides, create an ignored runtime environment
+file from the repository root:
 
 ```bash
 cp deploy/docker/.env.example deploy/docker/.env
 ```
 
-Compose requires this service environment file. The broadly compatible short
-`env_file` syntax resolves it as `deploy/docker/.env`; Compose validation and
-startup intentionally fail when the required operator file is missing.
+Compose does not load this service file implicitly. Pass it explicitly with the
+broadly supported `--env-file deploy/docker/.env` option. Empty admin values use
+the committed unusable example credentials rather than disabling authentication.
 
 Generate a bcrypt password hash locally with Caddy's interactive command, then
 set `LINK2VAULT_ADMIN_USER` and `LINK2VAULT_ADMIN_PASSWORD_HASH` in `.env`.
@@ -39,11 +41,24 @@ or Worker port. If another local service already owns 8080, set
 
 ## Validate and start
 
+Clean-checkout smoke validation uses the safe defaults and requires no local
+environment file:
+
 ```bash
 docker compose -f deploy/docker/compose.yml config --quiet
 docker compose -f deploy/docker/compose.yml up -d --build
 curl --fail http://127.0.0.1:8080/healthz
 docker compose -f deploy/docker/compose.yml down
+```
+
+After configuring operator values, include `--env-file` on every Compose command
+that must use them:
+
+```bash
+docker compose --env-file deploy/docker/.env -f deploy/docker/compose.yml config --quiet
+docker compose --env-file deploy/docker/.env -f deploy/docker/compose.yml up -d --build
+curl --fail http://127.0.0.1:8080/healthz
+docker compose --env-file deploy/docker/.env -f deploy/docker/compose.yml down
 ```
 
 `down` removes the containers and network but preserves the named volumes

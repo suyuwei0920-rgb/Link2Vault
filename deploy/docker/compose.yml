@@ -72,8 +72,10 @@ services:
       - >-
         cp /usr/bin/caddy /tmp/caddy
         && exec /tmp/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
-    env_file:
-      - .env
+    environment:
+      LINK2VAULT_ADMIN_USER: "${LINK2VAULT_ADMIN_USER:-example-admin}"
+      LINK2VAULT_ADMIN_PASSWORD_HASH: "${LINK2VAULT_ADMIN_PASSWORD_HASH:-$$2a$$14$$EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE}"
+      LINK2VAULT_MAX_UPLOAD_MB: "${LINK2VAULT_MAX_UPLOAD_MB:-1024}"
     ports:
       - "127.0.0.1:${LINK2VAULT_HTTP_PORT:-8080}:8080"
     read_only: true
