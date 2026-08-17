@@ -14,7 +14,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.audit_public_tree import audit_tree
+from scripts.audit_public_tree import Finding, audit_tree
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -122,6 +122,234 @@ def findings_by_path(root: Path) -> dict[str, set[str]]:
     for finding in findings:
         by_path.setdefault(finding.path, set()).add(finding.rule)
     return by_path
+
+
+def run_public_tree_audit(
+    root: Path, *, history: bool = False
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        str(REPOSITORY_ROOT / "scripts/audit_public_tree.py"),
+        str(root),
+    ]
+    if history:
+        command.extend(["--history", "HEAD"])
+    return subprocess.run(
+        command,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def prepare_audit_visibility(
+    root: Path, files: dict[str, str | bytes], visibility: str
+) -> None:
+    write_allowlist(root)
+    write_file(root, "README.md", "# public\n")
+    if visibility == "current":
+        for relative, content in files.items():
+            write_file(root, relative, content)
+        return
+
+    initialize_git_repository(root)
+    if visibility == "history":
+        configure_test_git_identity(root)
+        commit_all(root, "initial public tree")
+
+    for relative, content in files.items():
+        write_file(root, relative, content)
+
+    if visibility == "index":
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    elif visibility == "history":
+        commit_all(root, "add unsafe audit blobs")
+    else:
+        raise AssertionError(f"unknown audit visibility: {visibility}")
+
+    for relative in files:
+        (root / relative).unlink()
+
+    if visibility == "history":
+        commit_all(root, "delete unsafe audit blobs")
+
+
+@pytest.mark.parametrize("visibility", ["current", "index", "history"])
+def test_malformed_endpoint_blobs_fail_closed_without_clear_output(
+    tmp_path: Path, visibility: str
+) -> None:
+    """Parser failures in any audited blob must become generic findings."""
+    malformed_endpoints = {
+        "apps/bad-bracket.py": (
+            "URL=" + "http" + "://" + "[" + "not-an-ip]\n"
+        ),
+        "apps/secret-bracket.py": (
+            "WEBHOOK_URL=" + "https" + "://[" + "secret-shaped-value]/hook\n"
+        ),
+        "apps/bad-zone.py": (
+            "DATABASE_URL="
+            + "postgresql"
+            + "://"
+            + "user:pass@[bad-zone%25name]:99999/db\n"
+        ),
+        "apps/bad-port.py": (
+            "SOURCE_URL="
+            + "https"
+            + "://"
+            + "example.invalid:99999/status\n"
+        ),
+    }
+    prepare_audit_visibility(tmp_path, malformed_endpoints, visibility)
+
+    completed = run_public_tree_audit(
+        tmp_path, history=visibility == "history"
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr == ""
+    assert completed.stdout.count(": malformed_endpoint: REDACTED") == len(
+        malformed_endpoints
+    )
+    for stream in (completed.stdout, completed.stderr):
+        assert all(
+            clear_text not in stream
+            for clear_text in (
+                "not-an-ip",
+                "secret-shaped-value",
+                "user",
+                "pass",
+                "user:pass",
+                "bad-zone%25name",
+                "99999",
+            )
+        )
+        assert all(
+            exception_text not in stream
+            for exception_text in (
+                "Traceback",
+                "ValueError",
+                "does not appear to be",
+                "Port out of range",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("unsafe_path", "username", "suffix"),
+    [
+        (
+            "/" + "Users/alice/private/project/secret.txt",
+            "alice",
+            "private/project/secret.txt",
+        ),
+        (
+            "/" + "USERS/Bob/Client Data/key.txt",
+            "Bob",
+            "Client Data/key.txt",
+        ),
+        (
+            "C:" + r"\Users\carol\private\token.txt",
+            "carol",
+            r"private\token.txt",
+        ),
+        (
+            "c:/" + "USERS/dave/private/token.txt",
+            "dave",
+            "private/token.txt",
+        ),
+    ],
+)
+def test_finding_path_redaction_replaces_the_complete_home_path(
+    unsafe_path: str, username: str, suffix: str
+) -> None:
+    """Partial home-root replacement would retain identity and path details."""
+    finding = Finding(unsafe_path, "private_path", "REDACTED")
+
+    assert finding.path == "<redacted-home-path>"
+    assert username not in finding.path
+    assert suffix not in finding.path
+
+
+@pytest.mark.parametrize(
+    ("visibility", "home_path", "username", "suffix"),
+    [
+        pytest.param(
+            "current",
+            "/" + "Users/alice/private/project/secret.txt",
+            "alice",
+            "private/project/secret.txt",
+            id="current-macos-home",
+        ),
+        pytest.param(
+            "current",
+            "/" + "USERS/Bob/Client Data/key.txt",
+            "Bob",
+            "Client Data/key.txt",
+            id="current-casefolded-macos-home",
+        ),
+        pytest.param(
+            "index",
+            "C:" + r"\Users\carol\private\token.txt",
+            "carol",
+            r"private\token.txt",
+            id="index-windows-backslash-home",
+        ),
+        pytest.param(
+            "history",
+            "c:/" + "USERS/dave/private/token.txt",
+            "dave",
+            "private/token.txt",
+            id="history-windows-forward-slash-home",
+        ),
+    ],
+)
+def test_finding_path_redaction_is_consistent_across_audit_outputs(
+    tmp_path: Path,
+    visibility: str,
+    home_path: str,
+    username: str,
+    suffix: str,
+) -> None:
+    """Current, index, and history paths must share one safe renderer."""
+    path_secret = "sk-" + "pathsecretvalue1234"
+    hostile_filename = (
+        "hostile-" + path_secret + "\t\x1b[31m\n: forged: value.pem"
+    )
+    relative_home_path = (
+        "apps" + home_path
+        if home_path.startswith("/")
+        else "apps/" + home_path
+    )
+    files = {
+        relative_home_path + "/" + hostile_filename: "generic material\n",
+        "apps/nonhome-" + hostile_filename: "generic material\n",
+    }
+    prepare_audit_visibility(tmp_path, files, visibility)
+
+    completed = run_public_tree_audit(
+        tmp_path, history=visibility == "history"
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr == ""
+    assert len(completed.stdout.splitlines()) == 2
+    assert (
+        "<redacted-home-path>: signing_material: <signing_material>"
+        in completed.stdout
+    )
+    assert "<redacted-secret>" in completed.stdout
+    assert r"\t" in completed.stdout
+    assert r"\n" in completed.stdout
+    assert r"\x1b" in completed.stdout
+    assert "\t" not in completed.stdout
+    assert "\x1b" not in completed.stdout
+    assert ": forged: " not in completed.stdout
+    for stream in (completed.stdout, completed.stderr):
+        assert path_secret not in stream
+        assert home_path not in stream
+        assert username not in stream
+        assert suffix not in stream
 
 
 def test_audit_tree_accepts_allowlisted_synthetic_content_and_documented_hosts(

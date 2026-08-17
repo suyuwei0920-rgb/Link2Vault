@@ -192,8 +192,10 @@ PATH_DEPLOYMENT_HOST_RE = re.compile(
 
 def _sanitize_finding_path(path: str) -> str:
     """Redact path-borne secrets and neutralize control/log delimiter injection."""
+    if USER_HOME_RE.search(path):
+        return "<redacted-home-path>"
+
     sanitized = CREDENTIAL_RE.sub("<redacted-secret>", path)
-    sanitized = USER_HOME_RE.sub("/<redacted-home>/", sanitized)
     sanitized = PATH_NETWORK_ENDPOINT_RE.sub("<redacted-endpoint>", sanitized)
     sanitized = PATH_DEPLOYMENT_HOST_RE.sub("<redacted-endpoint>", sanitized)
     sanitized = PATH_SENSITIVE_ASSIGNMENT_RE.sub(
@@ -229,6 +231,30 @@ class Finding:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _sanitize_finding_path(self.path))
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedEndpoint:
+    username: str | None
+    password: str | None
+    hostname: str | None
+    port: int | None
+    query: str
+
+
+def safe_parse_endpoint(value: str) -> ParsedEndpoint | None:
+    """Return validated endpoint parts without exposing parser exceptions."""
+    try:
+        parsed = urlsplit(value)
+        return ParsedEndpoint(
+            parsed.username,
+            parsed.password,
+            parsed.hostname,
+            parsed.port,
+            parsed.query,
+        )
+    except ValueError:
+        return None
 
 
 def audit_tree(root: Path) -> list[Finding]:
@@ -1052,7 +1078,10 @@ def _content_findings_from_bytes(relative: str, content: bytes) -> list[Finding]
         value = match.group("value")
         normalized_target = value.removeprefix("DUMMY_")
         if "://" in normalized_target:
-            parsed = urlsplit(normalized_target)
+            parsed = safe_parse_endpoint(normalized_target)
+            if parsed is None:
+                findings.append(Finding(relative, "malformed_endpoint", "REDACTED"))
+                continue
             if (
                 parsed.username is not None
                 or parsed.password is not None
