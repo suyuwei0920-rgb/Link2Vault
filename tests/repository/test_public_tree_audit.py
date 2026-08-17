@@ -376,6 +376,7 @@ def test_ci_workflow_runs_every_required_blocking_command() -> None:
 def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> None:
     """Requiring a URL scheme would let bare deployment hosts evade Gitleaks."""
     protocol_rule = gitleaks_rule("non-example-domain")
+    assignment_rule = gitleaks_rule("assigned-network-domain")
     bare_rule = gitleaks_rule("bare-deployment-domain")
 
     assert gitleaks_rule_findings(
@@ -383,8 +384,34 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
     ) == [
         "https://" + "api.customer." + "com"
     ]
-    assert gitleaks_rule_findings(bare_rule, "endpoint=api." + "customer.com") == [
+    assert gitleaks_rule_findings(
+        assignment_rule, "HOST=customer." + "com"
+    ) == ["customer." + "com"]
+    assert gitleaks_rule_findings(
+        assignment_rule, "BASE_URL=kb." + "customer.com"
+    ) == ["kb." + "customer.com"]
+    assert gitleaks_rule_findings(
+        assignment_rule, "ORIGIN=tenant." + "museum"
+    ) == ["tenant." + "museum"]
+    assert gitleaks_rule_findings(bare_rule, "worker." + "customer.com") == [
+        "worker." + "customer.com"
+    ]
+    assert gitleaks_rule_findings(bare_rule, "api." + "customer.com") == [
         "api." + "customer.com"
+    ]
+    combined_bare_hosts = (
+        "HOST=customer." + "com\n"
+        "BASE_URL=kb." + "customer.com\n"
+        "worker." + "customer.com\n"
+        "api." + "customer.com\n"
+    )
+    assert gitleaks_rule_findings(assignment_rule, combined_bare_hosts) == [
+        "customer." + "com",
+        "kb." + "customer.com",
+    ]
+    assert gitleaks_rule_findings(bare_rule, combined_bare_hosts) == [
+        "worker." + "customer.com",
+        "api." + "customer.com",
     ]
 
     for safe_host in (
@@ -395,8 +422,12 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
         "api." + "github.com",
         "docs.python.org",
         "api.client.get",
+        "HOST=example.com",
+        "HOST=docs.python.org",
+        "BASE_URL=files.pythonhosted.org",
     ):
         assert gitleaks_rule_findings(protocol_rule, safe_host) == []
+        assert gitleaks_rule_findings(assignment_rule, safe_host) == []
         assert gitleaks_rule_findings(bare_rule, safe_host) == []
 
 
