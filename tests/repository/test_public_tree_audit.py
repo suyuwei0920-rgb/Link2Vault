@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def test_audit_tree_accepts_allowlisted_synthetic_content_and_documented_hosts(
         tmp_path,
         "apps/safe.py",
         "HOSTS = ['127.0.0.1', '192.0.2.10', 'https://example.com', "
-        "'https://docs.python.org/3/']\n",
+        "'https://example.invalid', 'https://docs.python.org/3/']\n",
     )
     write_file(tmp_path, "docs/guide.md", "Use only generated examples.\n")
 
@@ -108,11 +109,171 @@ def test_audit_tree_allows_only_hashed_generated_synthetic_media(tmp_path: Path)
 
 
 def test_audit_tree_does_not_follow_symlinks(tmp_path: Path) -> None:
-    """Following symlinks could scan or disclose content outside the repository."""
+    """External link targets must be rejected without scanning their contents."""
     write_allowlist(tmp_path)
     external = tmp_path.parent / "external-secret.txt"
     external.write_text("sk-" + "outside-repository-data", encoding="utf-8")
     (tmp_path / "apps").mkdir()
     (tmp_path / "apps" / "external-link.py").symlink_to(external)
+
+    findings = audit_tree(tmp_path)
+
+    assert [(finding.path, finding.rule, finding.evidence) for finding in findings] == [
+        ("apps/external-link.py", "symlink_absolute_target", "<symlink_absolute_target>")
+    ]
+
+
+def initialize_git_repository(root: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def test_audit_tree_uses_git_candidates_and_only_reports_force_added_env_files(
+    tmp_path: Path,
+) -> None:
+    """Including ignored runtime files would violate the tracked-candidate scope."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".gitignore", ".env\n")
+    write_file(tmp_path, "README.md", "# public\n")
+    write_file(tmp_path, "apps/safe.py", "VALUE = 'public'\n")
+    write_file(tmp_path, ".env", "TOKEN=runtime-only\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    write_file(tmp_path, "apps/untracked.m4a", b"untracked candidate")
+
+    findings = findings_by_path(tmp_path)
+    assert ".env" not in findings
+    assert findings["apps/untracked.m4a"] == {"media_file"}
+
+    subprocess.run(["git", "add", "-f", ".env"], cwd=tmp_path, check=True)
+
+    assert findings_by_path(tmp_path)[".env"] == {"environment_file"}
+
+
+def test_audit_tree_rejects_nested_git_control_directories_in_git_mode(
+    tmp_path: Path,
+) -> None:
+    """Pruning nested Git control directories would hide donor history."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "README.md", "# public\n")
+    write_file(tmp_path, "apps/embedded/.git/config", "[core]\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "README.md", ".public-allowlist"], cwd=tmp_path, check=True)
+
+    findings = audit_tree(tmp_path)
+
+    assert any(
+        finding.path == "apps/embedded/.git" and finding.rule == "nested_git"
+        for finding in findings
+    )
+    assert not any(finding.path == ".git" for finding in findings)
+
+
+def test_audit_tree_fails_closed_for_oversized_and_uninspectable_text(
+    tmp_path: Path,
+) -> None:
+    """Returning no finding for unreadable allowed source would expose it."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "apps/oversized.py", "x" * (2 * 1024 * 1024 + 1))
+    write_file(tmp_path, "apps/invalid.py", b"\xff\xfe\x00")
+
+    findings = findings_by_path(tmp_path)
+
+    assert findings["apps/oversized.py"] == {"TEXT_TOO_LARGE"}
+    assert findings["apps/invalid.py"] == {"UNINSPECTABLE_TEXT"}
+
+
+def test_audit_tree_validates_symlink_metadata_without_following_targets(
+    tmp_path: Path,
+) -> None:
+    """Silently skipping symlink objects could hide unsafe repository links."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "apps/target.txt", "safe\n")
+    external = tmp_path.parent / "outside-target.txt"
+    external.write_text("outside\n", encoding="utf-8")
+    (tmp_path / "apps" / "safe-link.txt").symlink_to("target.txt")
+    (tmp_path / "apps" / "private-link.pem").symlink_to("target.txt")
+    (tmp_path / "apps" / "absolute-link.txt").symlink_to(external)
+    (tmp_path / "apps" / "outside-link.txt").symlink_to("../../outside-target.txt")
+    (tmp_path / "apps" / "home-link.txt").symlink_to("/" + "Users/alice/private")
+    (tmp_path / "apps" / "broken-link.txt").symlink_to("missing.txt")
+
+    findings = findings_by_path(tmp_path)
+
+    assert "apps/safe-link.txt" not in findings
+    assert findings["apps/private-link.pem"] == {"signing_material"}
+    assert findings["apps/absolute-link.txt"] == {"symlink_absolute_target"}
+    assert findings["apps/outside-link.txt"] == {"symlink_outside_root"}
+    assert findings["apps/home-link.txt"] == {"symlink_user_home_target"}
+    assert findings["apps/broken-link.txt"] == {"broken_symlink"}
+
+
+def test_audit_tree_matches_private_names_and_extensions_case_insensitively(
+    tmp_path: Path,
+) -> None:
+    """Case-sensitive deny rules would allow platform-variant private files."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".ENV", "TOKEN=runtime-only\n")
+    write_file(tmp_path, "apps/recording.AMR", b"audio")
+    write_file(tmp_path, "apps/recording.AIFF", b"audio")
+    write_file(tmp_path, "apps/recording.CAF", b"audio")
+    write_file(tmp_path, "apps/release.7Z", b"archive")
+    write_file(tmp_path, "apps/release.TAR", b"archive")
+    write_file(tmp_path, "apps/release.GZ", b"archive")
+    write_file(tmp_path, "apps/release.IPA", b"package")
+    write_file(tmp_path, "apps/release.WHL", b"package")
+    write_file(tmp_path, "apps/.Superpowers/note.md", "private\n")
+    write_file(tmp_path, "apps/Transcripts/note.md", "private\n")
+
+    findings = findings_by_path(tmp_path)
+
+    assert findings[".ENV"] == {"environment_file"}
+    assert findings["apps/recording.AMR"] == {"media_file"}
+    assert findings["apps/recording.AIFF"] == {"media_file"}
+    assert findings["apps/recording.CAF"] == {"media_file"}
+    assert findings["apps/release.7Z"] == {"binary_artifact"}
+    assert findings["apps/release.TAR"] == {"binary_artifact"}
+    assert findings["apps/release.GZ"] == {"binary_artifact"}
+    assert findings["apps/release.IPA"] == {"binary_artifact"}
+    assert findings["apps/release.WHL"] == {"binary_artifact"}
+    assert findings["apps/.Superpowers/note.md"] == {"private_path"}
+    assert findings["apps/Transcripts/note.md"] == {"private_path"}
+
+
+def test_audit_tree_rejects_sensitive_urls_and_platform_path_variants(
+    tmp_path: Path,
+) -> None:
+    """Simplistic URL parsing would miss credentials, endpoints, and unsafe paths."""
+    write_allowlist(tmp_path)
+    write_file(
+        tmp_path,
+        "apps/unsafe_urls.py",
+        "USERINFO = 'HTTPS://" + "alice:private-password@api.internal.invalid'\n"
+        "IPV6 = 'https://" + "[2001:db8::dead]/v1'\n"
+        "QUERY = 'https://" + "example.com/callback?token=private-token'\n"
+        "HOST_QUERY = 'HTTPS://" + "service.invalid?mode=live,'\n"
+        "HOST_FRAGMENT = 'https://" + "service.invalid#fragment.'\n"
+        "BUCKET = 'S3://" + "private-exports-bucket/data'\n"
+        "MAC_PATH = '/" + "USERS/alice/private'\n"
+        "WINDOWS_PATH = 'C:" + "\\\\Users\\\\alice\\\\private'\n",
+    )
+
+    findings = audit_tree(tmp_path)
+    rules = {finding.rule for finding in findings}
+
+    assert {"credential", "deployment_endpoint", "bucket_identifier", "user_home_path"} <= rules
+    assert all("alice" not in finding.evidence for finding in findings)
+    assert all("private-password" not in finding.evidence for finding in findings)
+
+
+def test_audit_tree_allows_documented_hosts_inside_url_variants(tmp_path: Path) -> None:
+    """Rejecting safe loopback and RFC 5737 URLs would break public examples."""
+    write_allowlist(tmp_path)
+    write_file(
+        tmp_path,
+        "apps/safe_urls.py",
+        "URLS = ['http://localhost?check=yes', 'https://127.0.0.1:8000/path', "
+        "'http://[::1]/status', 'http://192.0.2.4?example=yes', "
+        "'https://198.51.100.6/#reference', 'http://203.0.113.7/docs']\n",
+    )
 
     assert audit_tree(tmp_path) == []
