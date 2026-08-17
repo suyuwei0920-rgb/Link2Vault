@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9
+        with:
+          version: "0.12.1"
+          enable-cache: true
+      - run: uv sync --frozen --dev
+      - run: uv run pytest
+      - run: uv run ruff check .
+
+  public-tree-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/audit_public_tree.py .
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install checksum-verified Gitleaks
+        shell: bash
+        run: |
+          archive="gitleaks_8.30.1_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/$archive"
+          printf '%s  %s\n' \
+            '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' \
+            "$archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$archive" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks git --redact --config .gitleaks.toml
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: moderate

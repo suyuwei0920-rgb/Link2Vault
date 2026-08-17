@@ -6,10 +6,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.audit_public_tree import audit_tree
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def write_allowlist(root: Path) -> None:
@@ -318,3 +321,24 @@ def test_audit_tree_applies_rfc5737_url_exceptions_to_exact_networks(
         assert findings == []
     else:
         assert expected_rule in {finding.rule for finding in findings}
+
+
+def test_ci_workflow_runs_every_required_blocking_command() -> None:
+    """Removing a required CI command would leave unsafe changes unblocked."""
+    workflow_path = REPOSITORY_ROOT / ".github/workflows/ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    run_commands = {
+        step["run"]
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if "run" in step
+    }
+
+    assert {"test", "public-tree-audit", "gitleaks", "dependency-review"} <= jobs.keys()
+    assert {
+        "uv run pytest",
+        "uv run ruff check .",
+        "python scripts/audit_public_tree.py .",
+        "gitleaks git --redact --config .gitleaks.toml",
+    } <= run_commands

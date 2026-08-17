@@ -1,0 +1,105 @@
+title = "Link2Vault public repository secret policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "tencent-secret-id"
+description = "Tencent Cloud SecretId"
+regex = '''\b((?:DUMMY_)?AKID[A-Za-z0-9]{32})\b'''
+secretGroup = 1
+keywords = ["akid", "dummy_akid"]
+
+[[rules]]
+id = "tencent-secret-key"
+description = "Tencent Cloud SecretKey assignment"
+regex = '''(?i)secret[_-]?key[\w .-]{0,20}[=:][\x60'"\s]{0,5}((?:DUMMY_)?[A-Za-z0-9]{32})(?:[\x60'"\s;]|$)'''
+secretGroup = 1
+keywords = ["secretkey", "secret_key", "secret-key"]
+
+[[rules]]
+id = "deepseek-openai-api-key"
+description = "DeepSeek or OpenAI-style API key"
+regex = '''\b((?:DUMMY_)?sk-[A-Za-z0-9_-]{16,})\b'''
+secretGroup = 1
+keywords = ["sk-", "dummy_sk-"]
+
+[[rules]]
+id = "bark-device-key"
+description = "Bark push device key"
+regex = '''(?i)https?://(?:api\.)?day\.app/((?:DUMMY_)?[A-Za-z0-9_-]{16,})(?:[/\s'"?]|$)'''
+secretGroup = 1
+keywords = ["day.app"]
+
+[[rules]]
+id = "pem-block"
+description = "PEM key or certificate block"
+regex = '''(?s)((?:DUMMY_)?-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----\r?\n[A-Za-z0-9+/=\r\n]{16,}-----END [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----)'''
+secretGroup = 1
+keywords = ["-----begin", "dummy_-----begin"]
+
+[[rules]]
+id = "android-keystore"
+description = "Android keystore file"
+path = '''(?i)(?:^|/)(?:[^/]+\.)?(?:jks|keystore)$'''
+
+    [[rules.allowlists]]
+    description = "Generated dummy Android keystores only"
+    paths = ['''^tests/fixtures-synthetic/(?:.*/)?DUMMY_[^/]+\.(?:jks|keystore)$''']
+
+[[rules]]
+id = "non-example-domain"
+description = "Non-example network domain"
+regex = '''(?i)((?:DUMMY_)?https?://(?:[a-z0-9-]+\.)+[a-z]{2,})(?:[:/]|\b)'''
+secretGroup = 1
+keywords = ["http://", "https://"]
+
+    [[rules.allowlists]]
+    description = "Reserved examples and public dependency or documentation hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^https?://(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
+      '''(?i)^https?://(?:docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|github\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+    ]
+
+[[rules]]
+id = "production-ipv4-literal"
+description = "Non-documentation IPv4 literal"
+regex = '''\b((?:DUMMY_)?(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Loopback, wildcard, and RFC 5737 documentation addresses"
+    regexTarget = "secret"
+    regexes = [
+      '''^(?:0\.0\.0\.0|127\.0\.0\.1)$''',
+      '''^192\.0\.2\.(?:[0-9]{1,3})$''',
+      '''^198\.51\.100\.(?:[0-9]{1,3})$''',
+      '''^203\.0\.113\.(?:[0-9]{1,3})$''',
+    ]
+
+[[rules]]
+id = "macos-user-home-path"
+description = "macOS user home path"
+regex = '''((?:DUMMY_)?[=: \x60'"\(]/[U]sers/[A-Za-z0-9._-]+(?:/[^\s\x60'"<>]*)?)'''
+secretGroup = 1
+
+[[allowlists]]
+description = "Synthetic fixture values must be explicitly marked"
+targetRules = [
+  "tencent-secret-id",
+  "tencent-secret-key",
+  "deepseek-openai-api-key",
+  "bark-device-key",
+  "pem-block",
+  "non-example-domain",
+  "production-ipv4-literal",
+  "macos-user-home-path",
+  "generic-api-key",
+  "openai-api-key",
+  "private-key",
+]
+condition = "AND"
+paths = ['''^tests/fixtures-synthetic/''']
+regexTarget = "secret"
+regexes = ['''^DUMMY_''']

@@ -16,5 +16,7 @@ Use the project's private vulnerability-reporting channel when one is published.
 - Keep examples synthetic and use reserved example-only values.
 - Do not add endpoints that access private, loopback, link-local, or cloud-metadata addresses without explicit SSRF protections and tests.
 - Treat generated test fixtures as public: include only synthetic data and record their SHA-256 values in `tests/fixtures-synthetic/MANIFEST.sha256`.
+- Prefix dummy secret-shaped fixture values with `DUMMY_` and keep them under `tests/fixtures-synthetic/`; no other secret allowlisting is accepted.
+- Run the test suite, Ruff, the public-tree audit, and Gitleaks before requesting review. CI blocks changes when any gate fails and performs dependency review on pull requests.
 
 Security-sensitive changes require review before publication.

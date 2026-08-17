@@ -5,8 +5,10 @@ docs/
 scripts/
 tests/
 .github/
+.gitleaks.toml
 .gitattributes
 .gitignore
+.pre-commit-config.yaml
 .public-allowlist
 LICENSE
 NOTICE
