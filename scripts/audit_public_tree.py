@@ -84,7 +84,7 @@ CREDENTIAL_RE = re.compile(
     r"xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[A-Z0-9]{16})"
 )
 IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
-USER_HOME_RE = re.compile(r"(?i)(?:/(?:users|home)/|[a-z]:\\users\\)")
+USER_HOME_RE = re.compile(r"(?i)(?:/(?:users|home)/|[a-z]:(?:\\+|/)users(?:\\+|/))")
 URL_RE = re.compile(
     r"https?://(?:(?P<userinfo>[^@\s/?#]+)@)?"
     r"(?P<host>\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d+)?"
@@ -410,7 +410,7 @@ def _is_documented_ipv4(value: str) -> bool:
     return (
         value in {"0.0.0.0", "127.0.0.1"}
         or octets[:3] == [192, 0, 2]
-        or octets[:2] == [198, 51]
+        or octets[:3] == [198, 51, 100]
         or octets[:3] == [203, 0, 113]
     )
 

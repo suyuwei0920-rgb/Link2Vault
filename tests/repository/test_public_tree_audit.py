@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.audit_public_tree import audit_tree
@@ -277,3 +279,42 @@ def test_audit_tree_allows_documented_hosts_inside_url_variants(tmp_path: Path) 
     )
 
     assert audit_tree(tmp_path) == []
+
+
+@pytest.mark.parametrize("separator", ["\\", "\\\\", "/"])
+def test_audit_tree_rejects_each_windows_user_home_serialization(
+    tmp_path: Path, separator: str
+) -> None:
+    """Missing an escaped Windows path form would expose a local identity."""
+    write_allowlist(tmp_path)
+    windows_path = "C:" + separator + "Users" + separator + "alice"
+    write_file(tmp_path, "apps/windows_path.py", f"PATH = '{windows_path}'\n")
+
+    assert findings_by_path(tmp_path)["apps/windows_path.py"] == {"user_home_path"}
+
+
+@pytest.mark.parametrize(
+    ("octets", "expected_rule"),
+    [
+        (("192", "0", "2", "8"), None),
+        (("198", "51", "100", "8"), None),
+        (("203", "0", "113", "8"), None),
+        (("192", "0", "3", "8"), "deployment_endpoint"),
+        (("198", "51", "42", "1"), "deployment_endpoint"),
+        (("203", "0", "114", "8"), "deployment_endpoint"),
+    ],
+)
+def test_audit_tree_applies_rfc5737_url_exceptions_to_exact_networks(
+    tmp_path: Path, octets: tuple[str, str, str, str], expected_rule: str | None
+) -> None:
+    """Broad RFC 5737 exceptions would permit non-documentation addresses."""
+    write_allowlist(tmp_path)
+    host = ".".join(octets)
+    write_file(tmp_path, "apps/ip_url.py", "URL = 'https://" + host + "/'\n")
+
+    findings = audit_tree(tmp_path)
+
+    if expected_rule is None:
+        assert findings == []
+    else:
+        assert expected_rule in {finding.rule for finding in findings}
