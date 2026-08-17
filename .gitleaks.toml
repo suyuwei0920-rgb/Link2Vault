@@ -50,7 +50,7 @@ path = '''(?i)(?:^|/)(?:[^/]+\.)?(?:jks|keystore)$'''
 [[rules]]
 id = "non-example-domain"
 description = "Non-example network domain"
-regex = '''(?im)\b((?:DUMMY_)?https?://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9.-])'''
+regex = '''(?im)\b((?:DUMMY_)?https?://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -64,7 +64,7 @@ secretGroup = 1
 [[rules]]
 id = "assigned-network-domain"
 description = "Network domain in an explicit deployment assignment"
-regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
+regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -85,7 +85,7 @@ secretGroup = 1
 [[rules]]
 id = "assigned-domain-name"
 description = "Network domain in an exact or composite DOMAIN assignment"
-regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9.-])'''
+regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -100,7 +100,7 @@ secretGroup = 1
 id = "bare-deployment-domain"
 description = "Bare deployment-style network domain"
 path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9-])'''
+regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -115,7 +115,7 @@ secretGroup = 1
 id = "bare-apex-domain"
 description = "Bare network domain in documentation or configuration"
 path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-regex = '''(?im)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9-])'''
+regex = '''(?im)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -124,7 +124,8 @@ secretGroup = 1
     regexes = [
       '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
       '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
-      '''(?i)^(?:compose\.ya?ml|operator\.env|settings\.toml)$''',
+      '''(?i)^(?:README\.md|SECURITY\.md|compose\.ya?ml|docker\.md|operator\.env|public-boundary\.md|pyproject\.toml|settings\.toml|uv\.lock)$''',
+      '''(?i)^(?:hatchling\.build|json\.load|link2vault\.main|rules\.allowlists|signal\.pause|tool\.hatch\.build\.targets\.wheel|tool\.ruff|urllib\.request(?:\.urlopen)?)$''',
     ]
 
 [[rules]]

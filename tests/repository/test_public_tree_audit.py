@@ -1208,6 +1208,47 @@ def test_actual_gitleaks_apex_domain_allows_reserved_and_canonical_hosts(
     ) == []
 
 
+def test_actual_gitleaks_apex_domain_allows_reviewed_file_and_member_identifiers(
+    tmp_path: Path,
+) -> None:
+    """Known public filenames and config member chains are not deployment domains."""
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {
+            "README.md": (
+                "See docs/public-boundary.md and SECURITY.md for policy.\n"
+            ),
+            "THIRD_PARTY_NOTICES.md": "Inventory: pyproject.toml and uv.lock.\n",
+            "pyproject.toml": (
+                'build-backend = "hatchling.build"\n'
+                'readme = "README.md"\n'
+                "[tool.hatch.build.targets.wheel]\n"
+                "[tool.pytest.ini_options]\n"
+                "[tool.ruff]\n"
+            ),
+            "apps/api/Dockerfile": (
+                "COPY pyproject.toml uv.lock README.md ./\n"
+                'CMD ["uvicorn", "link2vault.main:create_app"]\n'
+            ),
+            "deploy/docker/Caddyfile.example": (
+                "@oversized expression "
+                "{http.request.header.Content-Length} != \"\"\n"
+            ),
+            "deploy/docker/compose.yml": (
+                "command: link2vault.main:create_app\n"
+                "import: import json, urllib.request;\n"
+                "probe: urllib.request.urlopen(endpoint)\n"
+                "parse: json.load(response)\n"
+                "wait: signal.pause()\n"
+            ),
+            ".github/workflows/ci.yml": (
+                "if: github.event_name == 'pull_request'\n"
+            ),
+            ".gitleaks-paths.toml": "[[rules.allowlists]]\n",
+        },
+    ) == []
+
+
 def test_actual_gitleaks_apex_domain_does_not_scan_source_member_chains_or_prose(
     tmp_path: Path,
 ) -> None:
