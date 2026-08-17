@@ -1,0 +1,17 @@
+# Paths which may contain public repository content. One exact root-relative
+# file or directory per line; directory entries end with a slash.
+apps/
+docs/
+scripts/
+tests/
+.github/
+.gitattributes
+.gitignore
+.public-allowlist
+LICENSE
+NOTICE
+README.md
+SECURITY.md
+THIRD_PARTY_NOTICES.md
+pyproject.toml
+uv.lock
