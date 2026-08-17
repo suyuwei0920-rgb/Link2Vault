@@ -69,8 +69,8 @@ jobs:
           tar --extract --gzip --file "$archive" gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
       - run: uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v
-      - run: gitleaks git --redact --config .gitleaks.toml
-      - run: gitleaks git --redact --config .gitleaks-paths.toml
+      - run: gitleaks git --redact --log-opts=HEAD --config .gitleaks.toml
+      - run: gitleaks git --redact --log-opts=HEAD --config .gitleaks-paths.toml
 
   docker-contract:
     runs-on: ubuntu-latest

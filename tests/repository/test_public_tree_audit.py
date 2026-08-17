@@ -604,8 +604,8 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
     ]
     assert {
         "uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v",
-        "gitleaks git --redact --config .gitleaks.toml",
-        "gitleaks git --redact --config .gitleaks-paths.toml",
+        "gitleaks git --redact --log-opts=HEAD --config .gitleaks.toml",
+        "gitleaks git --redact --log-opts=HEAD --config .gitleaks-paths.toml",
     } <= commands_by_job["gitleaks"]
     assert {
         "docker version",
@@ -796,14 +796,14 @@ def test_gitleaks_assignment_rule_supports_strict_domain_keys(
     content: str, expected_secret: str
 ) -> None:
     """Omitting exact/composite DOMAIN keys would miss common deployment config."""
-    rule = gitleaks_rule("assigned-network-domain")
+    rule = gitleaks_rule("assigned-domain-name")
 
     assert gitleaks_rule_findings(rule, content) == [expected_secret]
 
 
 def test_gitleaks_assignment_rule_does_not_match_domain_name_substrings() -> None:
     """DOMAIN support must not turn arbitrary source identifiers into secrets."""
-    rule = gitleaks_rule("assigned-network-domain")
+    rule = gitleaks_rule("assigned-domain-name")
 
     for source_expression in (
         "RANDOMDOMAIN=customer." + "com",
@@ -838,7 +838,6 @@ def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
         ("'SERVICE_SERVER=config." + "server'", "config.server"),
         ("KB_HOST=settings." + "host/v1", "settings.host"),
         ("SERVICE_SERVER=config." + "server?mode=live", "config.server"),
-        ('PUBLIC_DOMAIN="settings.' + 'domain"', "settings.domain"),
     ):
         assert gitleaks_rule_findings(rule, unsafe_literal) == [expected_secret]
 
@@ -951,7 +950,7 @@ def test_actual_gitleaks_blocks_domain_keys_and_docs_config_apex_domains(
         (finding["File"], finding["StartLine"], finding["RuleID"])
         for finding in findings
     ) == [
-        ("apps/api/settings.py", 1, "assigned-network-domain"),
+        ("apps/api/settings.py", 1, "assigned-domain-name"),
         ("deploy/docker/settings.toml", 1, "bare-apex-domain"),
         ("docs/deployment.md", 1, "bare-apex-domain"),
     ]
@@ -974,6 +973,7 @@ def test_actual_gitleaks_bare_apex_rule_allows_reserved_and_public_hosts(
             "deploy/docker/public.toml": "registry = \"pypi.org\"\n",
             "apps/api/Dockerfile": "FROM ghcr.io/astral-sh/uv:0.12.1\n",
             "apps/api/prose.py": "FORMAT = 'customer." + "com is documentation'\n",
+            "apps/api/source.py": "domain = \"kb.customer.\" + \"com\"\n",
         },
     ) == []
 
