@@ -1,0 +1,38 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	route {
+		request_body {
+			max_size {$LINK2VAULT_MAX_UPLOAD_MB:1024}MB
+		}
+
+		header {
+			-Server
+			X-Content-Type-Options nosniff
+			Referrer-Policy no-referrer
+		}
+
+		handle /healthz {
+			reverse_proxy api:8000
+		}
+
+		handle /admin/* {
+			basic_auth {
+				{$LINK2VAULT_ADMIN_USER:example-admin} {$LINK2VAULT_ADMIN_PASSWORD_HASH:$2a$14$EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE}
+			}
+			reverse_proxy api:8000
+		}
+
+		# Bearer validation belongs to the Phase 2 application endpoint.
+		handle /ingest/* {
+			reverse_proxy api:8000
+		}
+
+		handle {
+			respond "Not Found" 404
+		}
+	}
+}

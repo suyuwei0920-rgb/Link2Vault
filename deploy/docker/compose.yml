@@ -1,0 +1,106 @@
+name: link2vault
+
+x-application-service: &application-service
+  build:
+    context: ../..
+    dockerfile: apps/api/Dockerfile
+  image: link2vault-api:phase1
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:uid=10001,gid=10001,mode=1770
+  networks:
+    - internal
+  volumes:
+    - app-data:/var/lib/link2vault/app
+    - vault-data:/var/lib/link2vault/vault
+    - media-tmp:/var/lib/link2vault/media-tmp
+
+services:
+  api:
+    <<: *application-service
+    command:
+      - uvicorn
+      - link2vault.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-access-log
+    environment:
+      LINK2VAULT_APP_ENV: "${LINK2VAULT_APP_ENV:-production}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/healthz'));
+          assert set(data) == {'status', 'version'} and data['status'] == 'ok'
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    <<: *application-service
+    command:
+      - python
+      - -c
+      - import signal; signal.pause()
+    environment:
+      LINK2VAULT_WORKER_CONCURRENCY: "${LINK2VAULT_WORKER_CONCURRENCY:-1}"
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+    # Copying strips the packaged bind-service file capability so UID 10001 can
+    # execute Caddy without violating no-new-privileges.
+    command:
+      - >-
+        cp /usr/bin/caddy /tmp/caddy
+        && exec /tmp/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    environment:
+      - LINK2VAULT_ADMIN_USER
+      - LINK2VAULT_ADMIN_PASSWORD_HASH
+      - LINK2VAULT_MAX_UPLOAD_MB
+    ports:
+      - "127.0.0.1:${LINK2VAULT_HTTP_PORT:-8080}:8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /config:uid=10001,gid=10001,mode=0700
+      - /data:uid=10001,gid=10001,mode=0700
+      - /tmp:rw,exec,uid=10001,gid=10001,mode=1770
+    user: "10001:10001"
+    networks:
+      - edge
+      - internal
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+
+networks:
+  edge:
+    internal: false
+  internal:
+    internal: true
+
+volumes:
+  app-data:
+  vault-data:
+  media-tmp:
