@@ -50,16 +50,29 @@ path = '''(?i)(?:^|/)(?:[^/]+\.)?(?:jks|keystore)$'''
 [[rules]]
 id = "non-example-domain"
 description = "Non-example network domain"
-regex = '''(?i)((?:DUMMY_)?https?://(?:[a-z0-9-]+\.)+[a-z]{2,})(?:[:/]|\b)'''
+regex = '''(?i)\b((?:DUMMY_)?https?://(?:[a-z0-9-]+\.)+[a-z]{2,})(?::[0-9]{1,5})?(?:[/\s'"?#]|\b)'''
 secretGroup = 1
-keywords = ["http://", "https://"]
 
     [[rules.allowlists]]
     description = "Reserved examples and public dependency or documentation hosts"
     regexTarget = "secret"
     regexes = [
-      '''(?i)^https?://(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
-      '''(?i)^https?://(?:docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|github\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+      '''(?i)^(?:https?://)?(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
+      '''(?i)^(?:https?://)?(?:api\.github\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|github\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+    ]
+
+[[rules]]
+id = "bare-deployment-domain"
+description = "Bare deployment-style network domain"
+regex = '''(?i)(?:^|[=:\s(]|(?:host|hostname|endpoint|url|uri|domain|server|base[_-]?url|api[_-]?host)[\w .-]{0,20}[=:][\t ]{0,5}[\x60'"])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos)\.(?:[a-z0-9-]+\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|internal|local|lan|corp|test|invalid))(?::[0-9]{1,5})?(?:[/\s'"?#]|\b)'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved examples and canonical public source hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:[a-z0-9-]+\.)*example\.(?:com|net|org|invalid)$''',
+      '''(?i)^api\.github\.com$''',
     ]
 
 [[rules]]
@@ -78,12 +91,6 @@ secretGroup = 1
       '''^203\.0\.113\.(?:[0-9]{1,3})$''',
     ]
 
-[[rules]]
-id = "macos-user-home-path"
-description = "macOS user home path"
-regex = '''((?:DUMMY_)?[=: \x60'"\(]/[U]sers/[A-Za-z0-9._-]+(?:/[^\s\x60'"<>]*)?)'''
-secretGroup = 1
-
 [[allowlists]]
 description = "Synthetic fixture values must be explicitly marked"
 targetRules = [
@@ -93,8 +100,8 @@ targetRules = [
   "bark-device-key",
   "pem-block",
   "non-example-domain",
+  "bare-deployment-domain",
   "production-ipv4-literal",
-  "macos-user-home-path",
   "generic-api-key",
   "openai-api-key",
   "private-key",

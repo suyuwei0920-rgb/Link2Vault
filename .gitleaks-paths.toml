@@ -1,0 +1,17 @@
+title = "Link2Vault local path policy"
+
+# This rule is intentionally isolated from the default Gitleaks configuration.
+# The default global allowlist suppresses macOS home paths before custom rules
+# can report them.
+[[rules]]
+id = "macos-user-home-path"
+description = "macOS user home path"
+regex = '''(?i)(?:^|[=: \x60'"\(])((?:DUMMY_)?/[U]sers/[A-Za-z0-9._-]+(?:/[^\s\x60'"<>),;]*)?)'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Explicitly marked synthetic home paths only"
+    condition = "AND"
+    paths = ['''^tests/fixtures-synthetic/''']
+    regexTarget = "secret"
+    regexes = ['''^DUMMY_''']

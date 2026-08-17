@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.audit_public_tree import audit_tree
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def gitleaks_rule(rule_id: str) -> dict[str, object]:
+    for config_name in (".gitleaks.toml", ".gitleaks-paths.toml"):
+        with (REPOSITORY_ROOT / config_name).open("rb") as config_file:
+            config = tomllib.load(config_file)
+        for rule in config["rules"]:
+            if rule["id"] == rule_id:
+                return rule
+    raise AssertionError(f"missing Gitleaks rule: {rule_id}")
+
+
+def gitleaks_rule_findings(rule: dict[str, object], text: str) -> list[str]:
+    pattern = re.compile(str(rule["regex"]))
+    secret_group = int(rule["secretGroup"])
+    findings: list[str] = []
+    for match in pattern.finditer(text):
+        secret = match.group(secret_group)
+        allowlisted = any(
+            re.search(allow_regex, secret)
+            for allowlist in rule.get("allowlists", [])
+            for allow_regex in allowlist.get("regexes", [])
+        )
+        if not allowlisted:
+            findings.append(secret)
+    return findings
 
 
 def write_allowlist(root: Path) -> None:
@@ -341,4 +369,49 @@ def test_ci_workflow_runs_every_required_blocking_command() -> None:
         "uv run ruff check .",
         "python scripts/audit_public_tree.py .",
         "gitleaks git --redact --config .gitleaks.toml",
+        "gitleaks git --redact --config .gitleaks-paths.toml",
     } <= run_commands
+
+
+def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> None:
+    """Requiring a URL scheme would let bare deployment hosts evade Gitleaks."""
+    protocol_rule = gitleaks_rule("non-example-domain")
+    bare_rule = gitleaks_rule("bare-deployment-domain")
+
+    assert gitleaks_rule_findings(
+        protocol_rule, "endpoint=https://" + "api.customer." + "com/v1"
+    ) == [
+        "https://" + "api.customer." + "com"
+    ]
+    assert gitleaks_rule_findings(bare_rule, "endpoint=api." + "customer.com") == [
+        "api." + "customer.com"
+    ]
+
+    for safe_host in (
+        "https://" + "api.example.com/v1",
+        "api." + "example.com",
+        "https://files.pythonhosted.org/packages/",
+        "https://" + "api.github.com/repos/",
+        "api." + "github.com",
+        "docs.python.org",
+        "api.client.get",
+    ):
+        assert gitleaks_rule_findings(protocol_rule, safe_host) == []
+        assert gitleaks_rule_findings(bare_rule, safe_host) == []
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_secret"),
+    [
+        ("/" + "Users/alice/private", "/" + "Users/alice/private"),
+        ("HOME=/" + "Users/bob/work", "/" + "Users/bob/work"),
+        ("prefix (/" + "uSeRs/Carol/project)", "/" + "uSeRs/Carol/project"),
+    ],
+)
+def test_gitleaks_macos_home_rule_captures_only_the_path(
+    content: str, expected_secret: str
+) -> None:
+    """Requiring and capturing a delimiter would miss or over-redact home paths."""
+    rule = gitleaks_rule("macos-user-home-path")
+
+    assert gitleaks_rule_findings(rule, content) == [expected_secret]

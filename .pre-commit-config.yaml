@@ -4,3 +4,6 @@ repos:
     hooks:
       - id: gitleaks
         args: ["--config=.gitleaks.toml"]
+      - id: gitleaks
+        name: Detect local user paths
+        args: ["--config=.gitleaks-paths.toml"]
