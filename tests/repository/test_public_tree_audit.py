@@ -744,7 +744,6 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
         "https://" + "api.github.com/repos/",
         "api." + "github.com",
         "docs.python.org",
-        "api.client.get",
         "HOST=example.com",
         "HOST=docs.python.org",
         "BASE_URL=files.pythonhosted.org",
@@ -752,6 +751,10 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
         assert gitleaks_rule_findings(protocol_rule, safe_host) == []
         assert gitleaks_rule_findings(assignment_rule, safe_host) == []
         assert gitleaks_rule_findings(bare_rule, safe_host) == []
+
+    source_member = "api.client.get"
+    assert gitleaks_rule_findings(protocol_rule, source_member) == []
+    assert gitleaks_rule_findings(assignment_rule, source_member) == []
 
 
 @pytest.mark.parametrize(
@@ -878,9 +881,12 @@ def test_actual_gitleaks_blocks_indented_hosts_and_non_source_literals(
     )
 
     findings = actual_gitleaks_findings(tmp_path, {"pressure.txt": content})
+    owned_findings = [
+        finding for finding in findings if finding["RuleID"] != "bare-apex-domain"
+    ]
 
     assert sorted(
-        (finding["StartLine"], finding["RuleID"]) for finding in findings
+        (finding["StartLine"], finding["RuleID"]) for finding in owned_findings
     ) == [
         (1, "bare-deployment-domain"),
         (3, "bare-deployment-domain"),
@@ -907,7 +913,7 @@ def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
     tmp_path: Path,
 ) -> None:
     """Source expressions and approved public hosts must remain false-positive safe."""
-    safe_content = (
+    source_content = (
         "PUBLIC_ORIGIN=location."
         + "origin\nPUBLIC_ORIGIN=window."
         + "location.origin\nSERVICE_SERVER=config."
@@ -915,18 +921,25 @@ def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
         + "host\nPUBLIC_ORIGIN = window."
         + "location.origin;\nSERVICE_SERVER: config."
         + "server,\nconfigure(KB_HOST=settings."
-        + "host)\nHOST=example.com\n"
-        "HOST=docs.python.org\n"
-        "BASE_URL=files.pythonhosted.org\n"
-        "api.github.com\n"
-        "api.client.get\n"
-        "https://docs.python.org/\n"
-        "GHOST=customer."
+        + "host)\napi.client.get\nGHOST=customer."
         + "com\nLOCALHOST=customer."
         + "com\n"
     )
+    public_host_content = (
+        "HOST=example.com\n"
+        "HOST=docs.python.org\n"
+        "BASE_URL=files.pythonhosted.org\n"
+        "api.github.com\n"
+        "https://docs.python.org/\n"
+    )
 
-    assert actual_gitleaks_findings(tmp_path, {"safe.txt": safe_content}) == []
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {
+            "apps/api/source.py": source_content,
+            "docs/public-hosts.txt": public_host_content,
+        },
+    ) == []
 
 
 def test_actual_gitleaks_blocks_domain_keys_and_docs_config_apex_domains(
@@ -958,6 +971,341 @@ def test_actual_gitleaks_blocks_domain_keys_and_docs_config_apex_domains(
     assert apex not in json.dumps(findings)
 
 
+@pytest.mark.parametrize(
+    (
+        "relative_path",
+        "content_prefix",
+        "unsafe_domain",
+        "content_suffix",
+        "expected_rule",
+    ),
+    [
+        (
+            "README.md",
+            "Production host: ",
+            "customer." + "finance",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "SECURITY.md",
+            "Report incidents for ",
+            "portal.customer." + "technology",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "NOTICE",
+            "Service operated at ",
+            "customer." + "solutions",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "THIRD_PARTY_NOTICES",
+            "Mirror: ",
+            "customer." + "company",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "THIRD_PARTY_NOTICES.md",
+            "Mirror: ",
+            "customer." + "company",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "docs/install.md",
+            "Install from ",
+            "customer." + "museum",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "docs/config.toml",
+            "Service: ",
+            "service.customer." + "international",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "notes/runbook.rst",
+            "Fail over to ",
+            "customer." + "finance",
+            "\n",
+            "bare-apex-domain",
+        ),
+        (
+            "config/example.yaml",
+            "DOMAIN=",
+            "customer." + "finance",
+            "\n",
+            "assigned-domain-name",
+        ),
+        (
+            "config/example.json",
+            '"PUBLIC_DOMAIN": "',
+            "tenant." + "xn--fiqs8s",
+            '"\n',
+            "assigned-domain-name",
+        ),
+    ],
+    ids=[
+        "readme",
+        "security",
+        "notice",
+        "third-party-notices",
+        "third-party-notices-markdown",
+        "docs-markdown",
+        "docs-config",
+        "document-extension",
+        "domain-assignment",
+        "punycode-assignment",
+    ],
+)
+def test_actual_gitleaks_apex_domain_blocks_root_docs_and_arbitrary_tlds(
+    tmp_path: Path,
+    relative_path: str,
+    content_prefix: str,
+    unsafe_domain: str,
+    content_suffix: str,
+    expected_rule: str,
+) -> None:
+    """Finite TLD/path lists must not let one public-file domain evade scanning."""
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {relative_path: content_prefix + unsafe_domain + content_suffix},
+    )
+
+    intended_findings = [
+        finding for finding in findings if finding["RuleID"] == expected_rule
+    ]
+    assert len(intended_findings) == 1
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert unsafe_domain not in json.dumps(findings)
+
+
+def test_actual_gitleaks_apex_domain_handles_case_quotes_punctuation_and_many_per_line(
+    tmp_path: Path,
+) -> None:
+    """Case, punctuation, and neighboring findings must not truncate detection."""
+    unsafe_domains = [
+        "Customer." + "FINANCE",
+        "portal.Customer." + "Technology",
+        "tenant." + "solutions",
+    ]
+    content = (
+        'Hosts: "'
+        + unsafe_domains[0]
+        + '", '
+        + unsafe_domains[1]
+        + "; "
+        + unsafe_domains[2]
+        + '".\n'
+    )
+
+    findings = actual_gitleaks_findings(tmp_path, {"docs/hosts.md": content})
+    apex_findings = [
+        finding for finding in findings if finding["RuleID"] == "bare-apex-domain"
+    ]
+
+    assert len(apex_findings) == len(unsafe_domains)
+    assert all(finding["Secret"] == "REDACTED" for finding in apex_findings)
+    report = json.dumps(findings)
+    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+
+
+def test_actual_gitleaks_apex_domain_deployment_prefix_supports_arbitrary_tlds(
+    tmp_path: Path,
+) -> None:
+    """Deployment-style prose domains must not retain a finite TLD list."""
+    unsafe_domains = [
+        "api.customer." + "finance",
+        "worker.customer." + "xn--fiqs8s",
+    ]
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {"docs/deployment-hosts.txt": "\n".join(unsafe_domains) + "\n"},
+    )
+    deployment_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "bare-deployment-domain"
+    ]
+
+    assert [finding["StartLine"] for finding in deployment_findings] == [1, 2]
+    assert all(finding["Secret"] == "REDACTED" for finding in deployment_findings)
+    report = json.dumps(findings)
+    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+
+
+def test_actual_gitleaks_apex_domain_handles_quoted_and_unquoted_assignments(
+    tmp_path: Path,
+) -> None:
+    """Assignment delimiters must not become part of the captured domain secret."""
+    unsafe_domains = [
+        "customer." + "finance",
+        "Portal.Customer." + "Technology",
+        "tenant." + "solutions",
+    ]
+    content = (
+        "DOMAIN="
+        + unsafe_domains[0]
+        + '\n"PUBLIC_DOMAIN": "'
+        + unsafe_domains[1]
+        + '",\ntenant-domain = \''
+        + unsafe_domains[2]
+        + "'\n"
+    )
+
+    findings = actual_gitleaks_findings(tmp_path, {"config/domains.yaml": content})
+    assignment_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "assigned-domain-name"
+    ]
+
+    assert [finding["StartLine"] for finding in assignment_findings] == [1, 2, 3]
+    assert all(finding["Secret"] == "REDACTED" for finding in assignment_findings)
+    report = json.dumps(findings)
+    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+
+
+def test_actual_gitleaks_apex_domain_allows_reserved_and_canonical_hosts(
+    tmp_path: Path,
+) -> None:
+    """Narrow public/reserved exceptions must remain usable in documentation."""
+    documented_hosts = [
+        "example.com",
+        "example.test",
+        "service.invalid",
+        "tenant.localhost",
+        "localhost",
+        "docs.python.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "github.com",
+        "api.github.com",
+        "www.apache.org",
+        "docs.docker.com",
+        "astral.sh",
+    ]
+
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {
+            "docs/public-hosts.md": "\n".join(documented_hosts) + "\n",
+            "apps/safe-domain-assignments.py": (
+                "DOMAIN=example.test\n"
+                "PUBLIC_DOMAIN=service.invalid\n"
+                "tenant-domain=tenant.localhost\n"
+                "HOST=docs.docker.com\n"
+                "PUBLIC_DOMAIN=astral.sh\n"
+            ),
+        },
+    ) == []
+
+
+def test_actual_gitleaks_apex_domain_does_not_scan_source_member_chains_or_prose(
+    tmp_path: Path,
+) -> None:
+    """Expanding prose coverage to source files would create member-chain noise."""
+    prose_domain = "customer." + "finance"
+    source_content = (
+        "client = api.client.get\n"
+        "origin = location."
+        + "origin\n"
+        + "message = 'Deploy "
+        + prose_domain
+        + "'\n"
+    )
+
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {
+            "apps/source.py": source_content,
+            "apps/source.ts": source_content,
+            "apps/source.tsx": source_content,
+            "apps/Source.java": source_content,
+        },
+    ) == []
+
+
+def test_actual_gitleaks_apex_domain_requires_valid_dns_label_boundaries(
+    tmp_path: Path,
+) -> None:
+    """Invalid labels and overlong TLDs must not yield truncated domain findings."""
+    invalid_domains = [
+        "-customer." + "finance",
+        "customer-." + "finance",
+        "customer." + "f",
+        "customer." + ("a" * 64),
+        "customer." + "xn--a",
+        "customer." + "xn--ab-",
+    ]
+
+    assert actual_gitleaks_findings(
+        tmp_path,
+        {"docs/invalid-domains.md": "\n".join(invalid_domains) + "\n"},
+    ) == []
+
+
+def test_actual_gitleaks_apex_domain_allowlist_requires_dummy_prefix_and_fixture_path(
+    tmp_path: Path,
+) -> None:
+    """Arbitrary-TLD prose fixtures require both the path and DUMMY_ marker."""
+    domain = "customer." + "finance"
+    dummy_domain = "DUMMY_" + domain
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.toml": "note='" + dummy_domain + "'\n",
+            "tests/fixtures-synthetic/non-dummy.toml": "note='" + domain + "'\n",
+            "docs/dummy-outside-fixtures.md": "Use " + dummy_domain + " here.\n",
+        },
+    )
+    apex_findings = [
+        finding for finding in findings if finding["RuleID"] == "bare-apex-domain"
+    ]
+
+    assert sorted(finding["File"] for finding in apex_findings) == [
+        "docs/dummy-outside-fixtures.md",
+        "tests/fixtures-synthetic/non-dummy.toml",
+    ]
+    assert all(finding["Secret"] == "REDACTED" for finding in apex_findings)
+
+
+def test_actual_gitleaks_apex_domain_assignment_allowlist_requires_dummy_and_path(
+    tmp_path: Path,
+) -> None:
+    """Arbitrary-TLD DOMAIN fixtures require both the path and DUMMY_ marker."""
+    domain = "customer." + "finance"
+    dummy_domain = "DUMMY_" + domain
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.py": "DOMAIN=" + dummy_domain + "\n",
+            "tests/fixtures-synthetic/non-dummy.py": "DOMAIN=" + domain + "\n",
+            "apps/dummy-outside-fixtures.py": "DOMAIN=" + dummy_domain + "\n",
+        },
+    )
+    assignment_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "assigned-domain-name"
+    ]
+
+    assert sorted(finding["File"] for finding in assignment_findings) == [
+        "apps/dummy-outside-fixtures.py",
+        "tests/fixtures-synthetic/non-dummy.py",
+    ]
+    assert all(finding["Secret"] == "REDACTED" for finding in assignment_findings)
+
+
 def test_actual_gitleaks_bare_apex_rule_allows_reserved_and_public_hosts(
     tmp_path: Path,
 ) -> None:
@@ -981,7 +1329,7 @@ def test_actual_gitleaks_bare_apex_rule_allows_reserved_and_public_hosts(
 def test_actual_gitleaks_requires_dummy_prefix_and_fixture_path(
     tmp_path: Path,
 ) -> None:
-    """Neither fixture location nor DUMMY_ alone may suppress a finding."""
+    """The host-assignment exception requires both fixture path and DUMMY_."""
     domain = "kb.customer." + "com"
     dummy_domain = "DUMMY_" + domain
 
@@ -993,13 +1341,17 @@ def test_actual_gitleaks_requires_dummy_prefix_and_fixture_path(
             "outside-fixtures.txt": "KB_HOST=" + dummy_domain + "\n",
         },
     )
+    assignment_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "assigned-network-domain"
+    ]
 
-    assert sorted(finding["File"] for finding in findings) == [
+    assert sorted(finding["File"] for finding in assignment_findings) == [
         "outside-fixtures.txt",
         "tests/fixtures-synthetic/non-dummy.txt",
     ]
-    assert all(finding["RuleID"] == "assigned-network-domain" for finding in findings)
-    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in assignment_findings)
 
 
 def test_actual_gitleaks_apex_allowlist_requires_dummy_prefix_and_fixture_path(
