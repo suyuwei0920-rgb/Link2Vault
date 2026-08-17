@@ -1514,6 +1514,304 @@ def test_actual_gitleaks_apex_domain_companion_allows_only_safe_second_value(
     assert unsafe_second.split("=", 1)[-1] not in unsafe_report
 
 
+MULTILINE_COMPANION_CASES = (
+    pytest.param(
+        "docs/multiline-adjacent.md",
+        "tests/fixtures-synthetic",
+        "docs",
+        ".md",
+        "",
+        "",
+        "bare-apex-domain",
+        "adjacent-bare-apex-domain",
+        id="bare-prose",
+    ),
+    pytest.param(
+        "apps/multiline-domain-settings.py",
+        "tests/fixtures-synthetic",
+        "apps",
+        ".py",
+        "DOMAIN=",
+        "PUBLIC_DOMAIN=",
+        "assigned-domain-name",
+        "adjacent-assigned-domain-name",
+        id="domain-assignments",
+    ),
+    pytest.param(
+        "apps/multiline-network-settings.py",
+        "tests/fixtures-synthetic",
+        "apps",
+        ".py",
+        "HOST=",
+        "ORIGIN=",
+        "assigned-network-domain",
+        "adjacent-assigned-network-domain",
+        id="network-assignments",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "fixture_directory",
+        "outside_directory",
+        "extension",
+        "first_prefix",
+        "second_prefix",
+        "owning_rule",
+        "companion_rule",
+    ),
+    MULTILINE_COMPANION_CASES,
+)
+def test_gitleaks_apex_domain_multiline_companion_captures_exact_pair(
+    path: str,
+    fixture_directory: str,
+    outside_directory: str,
+    extension: str,
+    first_prefix: str,
+    second_prefix: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """The complete-pair secret excludes both surrounding boundaries."""
+    del path, fixture_directory, outside_directory, extension, owning_rule
+    pair = (
+        first_prefix
+        + "customer."
+        + "finance"
+        + ";"
+        + second_prefix
+        + "portal."
+        + "technology"
+    )
+    content = "fixture header\n" + pair + ")\n"
+    rule = gitleaks_rule(companion_rule)
+
+    match = re.search(str(rule["regex"]), content)
+
+    assert match is not None
+    assert match.group(int(rule["secretGroup"])) == pair
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "fixture_directory",
+        "outside_directory",
+        "extension",
+        "first_prefix",
+        "second_prefix",
+        "owning_rule",
+        "companion_rule",
+    ),
+    MULTILINE_COMPANION_CASES,
+)
+def test_gitleaks_apex_domain_multiline_companion_allows_safe_second(
+    path: str,
+    fixture_directory: str,
+    outside_directory: str,
+    extension: str,
+    first_prefix: str,
+    second_prefix: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """Whole-file evaluation keeps second-slot allowances after a newline."""
+    del path, fixture_directory, outside_directory, extension, owning_rule
+    pair = (
+        first_prefix
+        + "customer."
+        + "finance"
+        + ";"
+        + second_prefix
+        + "docs.python."
+        + "org"
+    )
+
+    assert gitleaks_rule_findings(
+        gitleaks_rule(companion_rule), "fixture header\n" + pair + "\n"
+    ) == []
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "fixture_directory",
+        "outside_directory",
+        "extension",
+        "first_prefix",
+        "second_prefix",
+        "owning_rule",
+        "companion_rule",
+    ),
+    MULTILINE_COMPANION_CASES,
+)
+@pytest.mark.parametrize(
+    "safe_second_domain",
+    ["example." + "test", "docs.python." + "org"],
+    ids=["reserved-second", "canonical-second"],
+)
+def test_actual_gitleaks_apex_domain_multiline_companion_allows_safe_second(
+    tmp_path: Path,
+    path: str,
+    fixture_directory: str,
+    outside_directory: str,
+    extension: str,
+    first_prefix: str,
+    second_prefix: str,
+    owning_rule: str,
+    companion_rule: str,
+    safe_second_domain: str,
+) -> None:
+    """A preceding line must not defeat the second-slot safe-host allowance."""
+    del fixture_directory, outside_directory, extension
+    unsafe_domain = "customer." + "finance"
+    pair = (
+        first_prefix
+        + unsafe_domain
+        + ";"
+        + second_prefix
+        + safe_second_domain
+    )
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {path: "fixture header\n" + pair + "\n"},
+    )
+
+    assert len(findings) == 1
+    assert [finding["RuleID"] for finding in findings] == [owning_rule]
+    assert companion_rule not in {finding["RuleID"] for finding in findings}
+    assert findings[0]["StartLine"] == 2
+    assert findings[0]["Secret"] == "REDACTED"
+    assert findings[0]["Match"] != "REDACTED"
+    report = json.dumps(findings)
+    assert unsafe_domain not in report
+    assert safe_second_domain not in report
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "fixture_directory",
+        "outside_directory",
+        "extension",
+        "first_prefix",
+        "second_prefix",
+        "owning_rule",
+        "companion_rule",
+    ),
+    MULTILINE_COMPANION_CASES,
+)
+def test_actual_gitleaks_apex_domain_multiline_companion_dummy_cross_products(
+    tmp_path: Path,
+    path: str,
+    fixture_directory: str,
+    outside_directory: str,
+    extension: str,
+    first_prefix: str,
+    second_prefix: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """All DUMMY cross-products keep path AND second-slot semantics after headers."""
+    del path
+    first_domain = "customer." + "finance"
+    second_domain = "portal." + "technology"
+    dummy_first_domain = "DUMMY_" + first_domain
+    dummy_second_domain = "DUMMY_" + second_domain
+    value_pairs = {
+        "dummy-dummy": (dummy_first_domain, dummy_second_domain),
+        "dummy-non-dummy": (dummy_first_domain, second_domain),
+        "non-dummy-dummy": (first_domain, dummy_second_domain),
+        "non-dummy-non-dummy": (first_domain, second_domain),
+    }
+    files = {}
+    for case_name, (first_value, second_value) in value_pairs.items():
+        pair = (
+            first_prefix
+            + first_value
+            + ";"
+            + second_prefix
+            + second_value
+        )
+        content = "fixture header\n" + pair + ")\n"
+        files[f"{fixture_directory}/{case_name}{extension}"] = content
+        files[f"{outside_directory}/multiline-{case_name}{extension}"] = content
+
+    findings = actual_gitleaks_findings(tmp_path, files)
+    findings_by_file: dict[str, list[str]] = {}
+    for finding in findings:
+        findings_by_file.setdefault(str(finding["File"]), []).append(
+            str(finding["RuleID"])
+        )
+
+    expected_rules_by_file = {
+        f"{fixture_directory}/dummy-non-dummy{extension}": [companion_rule],
+        f"{fixture_directory}/non-dummy-dummy{extension}": [owning_rule],
+        f"{fixture_directory}/non-dummy-non-dummy{extension}": [
+            companion_rule,
+            owning_rule,
+        ],
+        f"{outside_directory}/multiline-dummy-dummy{extension}": [
+            companion_rule,
+            owning_rule,
+        ],
+        f"{outside_directory}/multiline-dummy-non-dummy{extension}": [
+            companion_rule,
+            owning_rule,
+        ],
+        f"{outside_directory}/multiline-non-dummy-dummy{extension}": [
+            companion_rule,
+            owning_rule,
+        ],
+        f"{outside_directory}/multiline-non-dummy-non-dummy{extension}": [
+            companion_rule,
+            owning_rule,
+        ],
+    }
+
+    assert len(findings) == 12
+    assert {
+        file_name: sorted(rule_ids)
+        for file_name, rule_ids in findings_by_file.items()
+    } == {
+        file_name: sorted(rule_ids)
+        for file_name, rule_ids in expected_rules_by_file.items()
+    }
+    assert f"{fixture_directory}/dummy-dummy{extension}" not in findings_by_file
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in findings
+        }
+    ) == len(findings)
+    assert all(finding["StartLine"] == 2 for finding in findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert all(
+        finding["StartColumn"] == 1 and finding["Match"] == "REDACTED)"
+        for finding in findings
+        if finding["RuleID"] == companion_rule
+    )
+    assert all(
+        finding["Match"] != "REDACTED"
+        for finding in findings
+        if finding["RuleID"] == owning_rule
+    )
+    report = json.dumps(findings)
+    assert first_domain not in report
+    assert second_domain not in report
+    assert dummy_first_domain not in report
+    assert dummy_second_domain not in report
+
+
 def test_actual_gitleaks_network_companion_preserves_source_chain_allowance(
     tmp_path: Path,
 ) -> None:

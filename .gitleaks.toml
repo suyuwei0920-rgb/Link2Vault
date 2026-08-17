@@ -85,17 +85,18 @@ secretGroup = 1
 [[rules]]
 id = "adjacent-assigned-network-domain"
 description = "Second network domain in adjacent deployment assignments"
-# Human ruling: companions capture the complete validated pair so --redact hides
-# both domains; the owning primary rule above retains its domain-only capture.
-regex = '''(?im)((?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*))'''
+# Human ruling: companions capture exactly the complete validated pair so
+# --redact hides both domains but not either surrounding boundary; the owning
+# primary rule above retains its domain-only capture.
+regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
 secretGroup = 1
 
     [[rules.allowlists]]
     description = "Reserved and canonical second hosts in whole-match companions"
     regexTarget = "secret"
     regexes = [
-      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)$''',
-      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)$''',
+      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))(?::[0-9]{1,5})?$''',
+      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?$''',
     ]
 
     [[rules.allowlists]]
@@ -122,17 +123,18 @@ secretGroup = 1
 [[rules]]
 id = "adjacent-assigned-domain-name"
 description = "Second domain in adjacent DOMAIN assignments"
-# Human ruling: companions capture the complete validated pair so --redact hides
-# both domains; the owning primary rule above retains its domain-only capture.
-regex = '''(?im)((?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]))'''
+# Human ruling: companions capture exactly the complete validated pair so
+# --redact hides both domains but not either surrounding boundary; the owning
+# primary rule above retains its domain-only capture.
+regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:$|[^a-z0-9_.-])'''
 secretGroup = 1
 
     [[rules.allowlists]]
     description = "Reserved and canonical second hosts in whole-match companions"
     regexTarget = "secret"
     regexes = [
-      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])$''',
-      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])$''',
+      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))(?::[0-9]{1,5})?$''',
+      '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?$''',
     ]
 
 [[rules]]
@@ -192,17 +194,18 @@ secretGroup = 1
 id = "adjacent-bare-apex-domain"
 description = "Second bare domain separated by one prose delimiter"
 path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-# Human ruling: companions capture the complete validated pair so --redact hides
-# both domains; the owning primary rule above retains its domain-only capture.
-regex = '''(?im)((?:^|[^a-z0-9_.-])(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;](?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n])))'''
+# Human ruling: companions capture exactly the complete validated pair so
+# --redact hides both domains but not either surrounding boundary; the owning
+# primary rule above retains its domain-only capture.
+regex = '''(?im)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;](?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
 secretGroup = 1
 
     [[rules.allowlists]]
     description = "Reserved and canonical second hosts in whole-match companions"
     regexTarget = "secret"
     regexes = [
-      '''(?i)^.*[\t ,;](?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))$''',
-      '''(?i)^.*[\t ,;](?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))$''',
+      '''(?i)^.*[\t ,;](?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
+      '''(?i)^.*[\t ,;](?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
 
     [[rules.allowlists]]
@@ -262,9 +265,9 @@ condition = "AND"
 paths = ['''^tests/fixtures-synthetic/''']
 regexTarget = "secret"
 regexes = [
-  '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)$''',
-  '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])$''',
-  '''(?i)^.*[\t ,;]DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))$''',
+  '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?$''',
+  '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?$''',
+  '''(?i)^.*[\t ,;]DUMMY_(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))$''',
 ]
 
 [[allowlists]]
