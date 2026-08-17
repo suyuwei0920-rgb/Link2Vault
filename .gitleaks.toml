@@ -83,6 +83,27 @@ secretGroup = 1
     ]
 
 [[rules]]
+id = "adjacent-assigned-network-domain"
+description = "Second network domain in adjacent deployment assignments"
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved domain families and reviewed canonical public hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
+      '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Unquoted source-chain value in the second adjacent assignment"
+    regexTarget = "match"
+    regexes = [
+      '''(?im)^\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.host)[\t ]*[;,) ]?$''',
+    ]
+
+[[rules]]
 id = "assigned-domain-name"
 description = "Network domain in an exact or composite DOMAIN assignment"
 regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
@@ -97,10 +118,9 @@ secretGroup = 1
     ]
 
 [[rules]]
-id = "bare-deployment-domain"
-description = "Bare deployment-style network domain"
-path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+id = "adjacent-assigned-domain-name"
+description = "Second domain in adjacent DOMAIN assignments"
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;]+[\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-])'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -110,6 +130,40 @@ secretGroup = 1
       '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
       '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
+
+[[rules]]
+id = "bare-deployment-domain"
+description = "Bare deployment-style network domain"
+regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved domain families and reviewed canonical public hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
+      '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+    ]
+
+[[rules]]
+id = "bare-deployment-domain-arbitrary"
+description = "Bare arbitrary-TLD deployment domain in documentation or configuration"
+path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
+regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved families, canonical hosts, and finite TLDs owned globally"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
+      '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+      '''(?i)^.*\.(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Source-code extensions remain outside arbitrary prose scope"
+    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
 
 [[rules]]
 id = "bare-apex-domain"
@@ -124,9 +178,30 @@ secretGroup = 1
     regexes = [
       '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
       '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
-      '''(?i)^(?:README\.md|SECURITY\.md|compose\.ya?ml|docker\.md|operator\.env|public-boundary\.md|pyproject\.toml|settings\.toml|uv\.lock)$''',
-      '''(?i)^(?:hatchling\.build|json\.load|link2vault\.main|rules\.allowlists|signal\.pause|tool\.hatch\.build\.targets\.wheel|tool\.ruff|urllib\.request(?:\.urlopen)?)$''',
     ]
+
+    [[rules.allowlists]]
+    description = "Source-code extensions remain outside arbitrary prose scope"
+    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
+
+[[rules]]
+id = "adjacent-bare-apex-domain"
+description = "Second bare domain separated by one prose delimiter"
+path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
+regex = '''(?im)\.(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;]+((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Reserved domain families and reviewed canonical public hosts"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
+      '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Source-code extensions remain outside arbitrary prose scope"
+    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
 
 [[rules]]
 id = "production-ipv4-literal"
@@ -154,9 +229,13 @@ targetRules = [
   "pem-block",
   "non-example-domain",
   "assigned-network-domain",
+  "adjacent-assigned-network-domain",
   "assigned-domain-name",
+  "adjacent-assigned-domain-name",
   "bare-deployment-domain",
+  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
+  "adjacent-bare-apex-domain",
   "production-ipv4-literal",
   "generic-api-key",
   "openai-api-key",
@@ -166,3 +245,156 @@ condition = "AND"
 paths = ['''^tests/fixtures-synthetic/''']
 regexTarget = "secret"
 regexes = ['''^DUMMY_''']
+
+[[allowlists]]
+description = "Reviewed Markdown-link lines in the root README"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^README\.md$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^Before contributing files, read \[the public/private boundary\]\(docs/public-boundary\.md\)\. In particular:$''',
+  '''(?m)^Please read \[SECURITY\.md\]\(SECURITY\.md\) before reporting a vulnerability or contributing security-sensitive changes\.$''',
+  '''(?m)^commands, see the \[Docker installation guide\]\(docs/install/docker\.md\)\.$''',
+]
+
+[[allowlists]]
+description = "Reviewed dependency-inventory filename lines"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^THIRD_PARTY_NOTICES\.md$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^`pyproject\.toml`; their transitive dependencies remain governed by their own$''',
+  '''(?m)^\| Dependency \| Direct use \| Declared version \| Resolved version in `uv\.lock` \| License \| Source \|$''',
+]
+
+[[allowlists]]
+description = "Reviewed Python project metadata lines"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^pyproject\.toml$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^build-backend = "hatchling\.build"$''',
+  '''(?m)^readme = "README\.md"$''',
+  '''(?m)^\[tool\.hatch\.build\.targets\.wheel\]$''',
+  '''(?m)^\[tool\.pytest\.ini_options\]$''',
+  '''(?m)^\[tool\.ruff\]$''',
+]
+
+[[allowlists]]
+description = "Reviewed API Dockerfile copy and entrypoint lines"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^apps/api/Dockerfile$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^COPY pyproject\.toml uv\.lock(?: README\.md)? \./$''',
+  '''(?m)^CMD \["uvicorn", "link2vault\.main:create_app", "--factory", "--host", "0\.0\.0\.0", "--port", "8000", "--no-access-log"\]$''',
+]
+
+[[allowlists]]
+description = "Reviewed Caddy request-size expression"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^deploy/docker/Caddyfile\.example$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^[\t ]*@oversized expression `\{http\.request\.header\.Content-Length\} != "" && int\(\{http\.request\.header\.Content-Length\}\) > \{\$LINK2VAULT_MAX_UPLOAD_MB:1024\} \* 1000 \* 1000`$''',
+]
+
+[[allowlists]]
+description = "Reviewed embedded Python member lines in Compose"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^deploy/docker/compose\.ya?ml$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^[\t ]*- link2vault\.main:create_app$''',
+  '''(?m)^[\t ]*import json, urllib\.request;$''',
+  '''(?m)^[\t ]*data=json\.load\(urllib\.request\.urlopen\('http[:]//127\.0\.0\.1:8000/healthz'\)\);$''',
+  '''(?m)^[\t ]*- import signal; signal\.pause\(\)$''',
+]
+
+[[allowlists]]
+description = "Reviewed workflow event condition"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^\.github/workflows/ci\.yml$''']
+regexTarget = "line"
+regexes = ['''(?m)^[\t ]*if: github\.event_name == 'pull_request'$''']
+
+[[allowlists]]
+description = "Reviewed nested rule allowlist declaration"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^\.gitleaks-paths\.toml$''']
+regexTarget = "line"
+regexes = ['''(?m)^[\t ]*\[\[rules\.allowlists\]\]$''']
+
+[[allowlists]]
+description = "Reviewed operator environment guidance"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^deploy/docker/\.env\.example$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^# Runtime policy defaults\. Copy to operator\.env and review before deployment\.$''',
+]
+
+[[allowlists]]
+description = "Reviewed Docker installation filename and command lines"
+targetRules = [
+  "bare-deployment-domain-arbitrary",
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^docs/install/docker\.md$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^cp deploy/docker/\.env\.example deploy/docker/operator\.env$''',
+  '''(?m)^deliberately uses the non-default, ignored `operator\.env` name so every override$''',
+  '''(?m)^`--env-file deploy/docker/operator\.env` option\. Empty admin values use the$''',
+  '''(?m)^`operator\.env`\.$''',
+  '''(?m)^docker compose -f deploy/docker/compose\.yml (?:config --quiet|up -d --build|down)$''',
+  '''(?m)^docker compose --env-file deploy/docker/(?:operator\.env|\.env) -f deploy/docker/compose\.yml (?:config --quiet|up -d --build|down)$''',
+  '''(?m)^The readable image tags in `apps/api/Dockerfile` and `deploy/docker/compose\.yml`$''',
+]
