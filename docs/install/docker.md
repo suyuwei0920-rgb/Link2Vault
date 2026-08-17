@@ -13,6 +13,10 @@ From the repository root, create an ignored runtime environment file:
 cp deploy/docker/.env.example deploy/docker/.env
 ```
 
+Compose loads this service environment file explicitly when it exists. To use a
+different operator-managed file, set `LINK2VAULT_ENV_FILE` to its path before
+running Compose; the default remains `deploy/docker/.env`.
+
 Generate a bcrypt password hash locally with Caddy's interactive command, then
 set `LINK2VAULT_ADMIN_USER` and `LINK2VAULT_ADMIN_PASSWORD_HASH` in `.env`.
 Keep the hash single-quoted so its dollar signs remain literal. The committed

@@ -5,6 +5,9 @@
 
 :8080 {
 	route {
+		@oversized expression `{http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > {$LINK2VAULT_MAX_UPLOAD_MB:1024} * 1000 * 1000`
+		respond @oversized "Request body too large" 413
+
 		request_body {
 			max_size {$LINK2VAULT_MAX_UPLOAD_MB:1024}MB
 		}

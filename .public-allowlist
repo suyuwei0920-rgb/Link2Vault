@@ -6,6 +6,7 @@ docs/
 scripts/
 tests/
 .github/
+.dockerignore
 .gitleaks-paths.toml
 .gitleaks.toml
 .gitattributes

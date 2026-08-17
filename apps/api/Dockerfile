@@ -4,13 +4,14 @@ FROM python:3.12-slim AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /opt/link2vault
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/api/link2vault ./apps/api/link2vault
-RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.12-slim AS runtime
 
 ENV PATH="/opt/link2vault/.venv/bin:$PATH" \
+    PYTHONPATH="/opt/link2vault/apps/api" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -23,6 +24,7 @@ RUN groupadd --gid 10001 link2vault \
     && chown -R 10001:10001 /var/lib/link2vault
 
 COPY --from=builder --chown=10001:10001 /opt/link2vault/.venv /opt/link2vault/.venv
+COPY --from=builder --chown=10001:10001 /opt/link2vault/apps/api/link2vault /opt/link2vault/apps/api/link2vault
 
 USER 10001:10001
 EXPOSE 8000
