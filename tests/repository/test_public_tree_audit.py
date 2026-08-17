@@ -1174,11 +1174,22 @@ def test_actual_gitleaks_apex_domain_reports_exactly_two_with_one_separator(
         owning_rule,
         companion_rule,
     }
+    owning_finding = next(
+        finding for finding in findings if finding["RuleID"] == owning_rule
+    )
+    companion_finding = next(
+        finding for finding in findings if finding["RuleID"] == companion_rule
+    )
+    # Human ruling: primaries retain domain-only captures, while companions
+    # redact the complete validated pair so neither domain leaks via Match.
+    assert owning_finding["Secret"] == "REDACTED"
+    assert owning_finding["Match"] != "REDACTED"
+    assert companion_finding["Secret"] == "REDACTED"
+    assert companion_finding["Match"] == "REDACTED"
     assert len(
         {
             (
                 finding["File"],
-                finding["RuleID"],
                 finding["StartLine"],
                 finding["StartColumn"],
                 finding["EndLine"],
@@ -1224,7 +1235,6 @@ def test_actual_gitleaks_apex_domain_avoids_companion_duplicates(
         {
             (
                 finding["File"],
-                finding["RuleID"],
                 finding["StartLine"],
                 finding["StartColumn"],
                 finding["EndLine"],
@@ -1237,6 +1247,291 @@ def test_actual_gitleaks_apex_domain_avoids_companion_duplicates(
     report = json.dumps(findings)
     assert first.split("=", 1)[-1] not in report
     assert second.split("=", 1)[-1] not in report
+
+
+@pytest.mark.parametrize(
+    ("path", "content", "unsafe_domains", "owning_rule", "companion_rule"),
+    [
+        pytest.param(
+            "apps/domain-settings.py",
+            "'DOMAIN'='alpha."
+            + "review';'PUBLIC_DOMAIN'='beta."
+            + "review'\n",
+            ["alpha." + "review", "beta." + "review"],
+            "assigned-domain-name",
+            "adjacent-assigned-domain-name",
+            id="single-quoted-domain-assignments",
+        ),
+        pytest.param(
+            "apps/network-settings.py",
+            "'HOST'='api.alpha."
+            + "com';'ORIGIN'='api.beta."
+            + "com'\n",
+            ["api.alpha." + "com", "api.beta." + "com"],
+            "assigned-network-domain",
+            "adjacent-assigned-network-domain",
+            id="single-quoted-network-assignments",
+        ),
+        pytest.param(
+            "apps/ported-settings.py",
+            '"DOMAIN"="alpha.'
+            + 'review:8443";"PUBLIC_DOMAIN"="beta.'
+            + 'review:9443"\n',
+            ["alpha." + "review", "beta." + "review"],
+            "assigned-domain-name",
+            "adjacent-assigned-domain-name",
+            id="double-quoted-ported-domain-assignments",
+        ),
+    ],
+)
+def test_actual_gitleaks_apex_domain_quoted_pairs_need_no_companion(
+    tmp_path: Path,
+    path: str,
+    content: str,
+    unsafe_domains: list[str],
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """A closing quote leaves the separator available to both primary matches."""
+    findings = actual_gitleaks_findings(tmp_path, {path: content})
+
+    assert len(findings) == 2
+    assert {finding["RuleID"] for finding in findings} == {owning_rule}
+    assert companion_rule not in {finding["RuleID"] for finding in findings}
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in findings
+        }
+    ) == len(findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert all(finding["Match"] != "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "invalid_first",
+        "valid_first",
+        "second",
+        "owning_rule",
+        "companion_rule",
+    ),
+    [
+        pytest.param(
+            "apps/domain-settings.py",
+            "NOTE=release." + "finance",
+            "DOMAIN=release." + "finance",
+            "DOMAIN=customer." + "technology",
+            "assigned-domain-name",
+            "adjacent-assigned-domain-name",
+            id="domain-assignments",
+        ),
+        pytest.param(
+            "apps/network-settings.py",
+            "NOTE=release." + "finance",
+            "HOST=release." + "finance",
+            "HOST=api.customer." + "com",
+            "assigned-network-domain",
+            "adjacent-assigned-network-domain",
+            id="network-assignments",
+        ),
+        pytest.param(
+            "docs/adjacent.md",
+            "x_release." + "finance",
+            "release." + "finance",
+            "customer." + "technology",
+            "bare-apex-domain",
+            "adjacent-bare-apex-domain",
+            id="bare-prose",
+        ),
+    ],
+)
+def test_actual_gitleaks_apex_domain_companion_requires_owned_first_value(
+    tmp_path: Path,
+    path: str,
+    invalid_first: str,
+    valid_first: str,
+    second: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """A TLD-like suffix is not enough to activate a companion rule."""
+    invalid_findings = actual_gitleaks_findings(
+        tmp_path / "invalid",
+        {path: invalid_first + ";" + second + "\n"},
+    )
+
+    assert len(invalid_findings) == 1
+    assert {finding["RuleID"] for finding in invalid_findings} == {owning_rule}
+    assert companion_rule not in {
+        finding["RuleID"] for finding in invalid_findings
+    }
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in invalid_findings
+        }
+    ) == len(invalid_findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in invalid_findings)
+    assert invalid_findings[0]["Match"] != "REDACTED"
+    invalid_report = json.dumps(invalid_findings)
+    assert invalid_first.split("=", 1)[-1].removeprefix("x_") not in invalid_report
+    assert second.split("=", 1)[-1] not in invalid_report
+
+    valid_findings = actual_gitleaks_findings(
+        tmp_path / "valid",
+        {path: valid_first + ";" + second + "\n"},
+    )
+
+    assert len(valid_findings) == 2
+    assert {finding["RuleID"] for finding in valid_findings} == {
+        owning_rule,
+        companion_rule,
+    }
+    valid_owning_finding = next(
+        finding for finding in valid_findings if finding["RuleID"] == owning_rule
+    )
+    valid_companion_finding = next(
+        finding for finding in valid_findings if finding["RuleID"] == companion_rule
+    )
+    assert valid_owning_finding["Secret"] == "REDACTED"
+    assert valid_owning_finding["Match"] != "REDACTED"
+    assert valid_companion_finding["Secret"] == "REDACTED"
+    assert valid_companion_finding["Match"] == "REDACTED"
+    assert len(
+        {
+            (
+                finding["File"],
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in valid_findings
+        }
+    ) == len(valid_findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in valid_findings)
+    valid_report = json.dumps(valid_findings)
+    assert valid_first.split("=", 1)[-1] not in valid_report
+    assert second.split("=", 1)[-1] not in valid_report
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "unsafe_first",
+        "safe_second",
+        "safe_first",
+        "unsafe_second",
+        "owning_rule",
+        "companion_rule",
+    ),
+    [
+        pytest.param(
+            "docs/adjacent.md",
+            "customer." + "finance",
+            "example." + "test",
+            "example." + "test",
+            "customer." + "technology",
+            "bare-apex-domain",
+            "adjacent-bare-apex-domain",
+            id="bare-prose",
+        ),
+        pytest.param(
+            "apps/domain-settings.py",
+            "DOMAIN=customer." + "finance",
+            "DOMAIN=docs.python." + "org",
+            "DOMAIN=docs.python." + "org",
+            "DOMAIN=customer." + "technology",
+            "assigned-domain-name",
+            "adjacent-assigned-domain-name",
+            id="domain-assignments",
+        ),
+        pytest.param(
+            "apps/network-settings.py",
+            "HOST=customer." + "finance",
+            "HOST=api.github." + "com",
+            "HOST=api.github." + "com",
+            "HOST=api.customer." + "com",
+            "assigned-network-domain",
+            "adjacent-assigned-network-domain",
+            id="network-assignments",
+        ),
+    ],
+)
+def test_actual_gitleaks_apex_domain_companion_allows_only_safe_second_value(
+    tmp_path: Path,
+    path: str,
+    unsafe_first: str,
+    safe_second: str,
+    safe_first: str,
+    unsafe_second: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """Whole-match allowances must inspect the second structural value."""
+    safe_second_findings = actual_gitleaks_findings(
+        tmp_path / "safe-second",
+        {path: unsafe_first + ";" + safe_second + "\n"},
+    )
+
+    assert len(safe_second_findings) == 1
+    assert {finding["RuleID"] for finding in safe_second_findings} == {
+        owning_rule
+    }
+    assert companion_rule not in {
+        finding["RuleID"] for finding in safe_second_findings
+    }
+
+    unsafe_second_findings = actual_gitleaks_findings(
+        tmp_path / "unsafe-second",
+        {path: safe_first + ";" + unsafe_second + "\n"},
+    )
+
+    assert len(unsafe_second_findings) == 1
+    assert {finding["RuleID"] for finding in unsafe_second_findings} == {
+        companion_rule
+    }
+    assert unsafe_second_findings[0]["Secret"] == "REDACTED"
+    assert unsafe_second_findings[0]["Match"] == "REDACTED"
+    unsafe_report = json.dumps(unsafe_second_findings)
+    assert safe_first.split("=", 1)[-1] not in unsafe_report
+    assert unsafe_second.split("=", 1)[-1] not in unsafe_report
+
+
+def test_actual_gitleaks_network_companion_preserves_source_chain_allowance(
+    tmp_path: Path,
+) -> None:
+    """A valid first network assignment must not make a source chain a host."""
+    unsafe_domain = "customer." + "finance"
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "apps/network-settings.py": (
+                "HOST=" + unsafe_domain + ";ORIGIN=location." + "origin\n"
+            )
+        },
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["RuleID"] == "assigned-network-domain"
+    assert findings[0]["Secret"] == "REDACTED"
+    assert unsafe_domain not in json.dumps(findings)
 
 
 def test_actual_gitleaks_apex_domain_deployment_prefix_supports_arbitrary_tlds(
@@ -1613,6 +1908,9 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
             "tests/fixtures-synthetic/non-dummy.md": (
                 bare_separator.join(domains) + "\n"
             ),
+            "tests/fixtures-synthetic/first-dummy-only.md": (
+                dummy_domains[0] + bare_separator + domains[1] + "\n"
+            ),
             "docs/dummy-outside-fixtures.md": (
                 bare_separator.join(dummy_domains) + "\n"
             ),
@@ -1627,6 +1925,14 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
             "tests/fixtures-synthetic/non-dummy.py": (
                 "DOMAIN="
                 + domains[0]
+                + assignment_separator
+                + "PUBLIC_DOMAIN="
+                + domains[1]
+                + "\n"
+            ),
+            "tests/fixtures-synthetic/first-dummy-only.py": (
+                "DOMAIN="
+                + dummy_domains[0]
                 + assignment_separator
                 + "PUBLIC_DOMAIN="
                 + domains[1]
@@ -1656,6 +1962,14 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
                 + domains[1]
                 + "\n"
             ),
+            "tests/fixtures-synthetic/first-dummy-only-network.py": (
+                "HOST="
+                + dummy_domains[0]
+                + assignment_separator
+                + "ORIGIN="
+                + domains[1]
+                + "\n"
+            ),
             "apps/dummy-network-outside-fixtures.py": (
                 "HOST="
                 + dummy_domains[0]
@@ -1674,6 +1988,9 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
         "apps/dummy-outside-fixtures.py",
         "docs/dummy-outside-fixtures.md",
         "docs/dummy-outside-fixtures.md",
+        "tests/fixtures-synthetic/first-dummy-only-network.py",
+        "tests/fixtures-synthetic/first-dummy-only.md",
+        "tests/fixtures-synthetic/first-dummy-only.py",
         "tests/fixtures-synthetic/non-dummy-network.py",
         "tests/fixtures-synthetic/non-dummy-network.py",
         "tests/fixtures-synthetic/non-dummy.md",
@@ -1683,6 +2000,11 @@ def test_actual_gitleaks_apex_domain_adjacent_rules_preserve_dummy_and_path(
     ]
     assert {finding["RuleID"] for finding in findings} == expected_rules
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert all(
+        finding["Match"] == "REDACTED"
+        for finding in findings
+        if str(finding["RuleID"]).startswith("adjacent-")
+    )
     report = json.dumps(findings)
     assert all(domain not in report for domain in domains)
     assert all(dummy_domain not in report for dummy_domain in dummy_domains)
