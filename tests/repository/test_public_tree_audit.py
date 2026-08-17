@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -33,13 +35,65 @@ def gitleaks_rule_findings(rule: dict[str, object], text: str) -> list[str]:
     findings: list[str] = []
     for match in pattern.finditer(text):
         secret = match.group(secret_group)
-        allowlisted = any(
-            re.search(allow_regex, secret)
-            for allowlist in rule.get("allowlists", [])
-            for allow_regex in allowlist.get("regexes", [])
-        )
+        allowlisted = False
+        for allowlist in rule.get("allowlists", []):
+            regex_target = allowlist.get("regexTarget", "secret")
+            if regex_target == "secret":
+                target = secret
+            elif regex_target == "match":
+                target = match.group(0)
+            else:
+                raise AssertionError(
+                    f"unsupported test evaluator regex target: {regex_target}"
+                )
+            allowlisted = any(
+                re.search(allow_regex, target)
+                for allow_regex in allowlist.get("regexes", [])
+            )
+            if allowlisted:
+                break
         if not allowlisted:
             findings.append(secret)
+    return findings
+
+
+def actual_gitleaks_findings(
+    tmp_path: Path, files: dict[str, str]
+) -> list[dict[str, object]]:
+    executable = shutil.which("gitleaks")
+    if executable is None:
+        pytest.skip("actual Gitleaks pressure tests require the pinned binary")
+
+    source_root = tmp_path / "source"
+    for relative_path, content in files.items():
+        write_file(source_root, relative_path, content)
+
+    report_path = tmp_path / "gitleaks-report.json"
+    completed = subprocess.run(
+        [
+            executable,
+            "dir",
+            "--no-banner",
+            "--redact",
+            "--exit-code",
+            "0",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report_path),
+            "--config",
+            str(REPOSITORY_ROOT / ".gitleaks.toml"),
+            ".",
+        ],
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    findings = json.loads(report_path.read_text(encoding="utf-8"))
+    assert isinstance(findings, list)
     return findings
 
 
@@ -368,6 +422,7 @@ def test_ci_workflow_runs_every_required_blocking_command() -> None:
         "uv run pytest",
         "uv run ruff check .",
         "python scripts/audit_public_tree.py .",
+        "uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v",
         "gitleaks git --redact --config .gitleaks.toml",
         "gitleaks git --redact --config .gitleaks-paths.toml",
     } <= run_commands
@@ -397,6 +452,11 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
         "worker." + "customer.com"
     ]
     assert gitleaks_rule_findings(bare_rule, "api." + "customer.com") == [
+        "api." + "customer.com"
+    ]
+    compound_host = "HOST=settings." + "host,api." + "customer.com"
+    assert gitleaks_rule_findings(assignment_rule, compound_host) == []
+    assert gitleaks_rule_findings(bare_rule, compound_host) == [
         "api." + "customer.com"
     ]
     combined_bare_hosts = (
@@ -467,13 +527,137 @@ def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
 
     for safe_assignment in (
         "PUBLIC_ORIGIN=location." + "origin",
-        '"PUBLIC_ORIGIN": "window.' + 'location.origin"',
+        "PUBLIC_ORIGIN=window." + "location.origin",
         "SERVICE_SERVER=config." + "server",
         "KB_HOST=settings." + "host",
+        "PUBLIC_ORIGIN = window." + "location.origin;",
+        "SERVICE_SERVER: config." + "server,",
+        "configure(KB_HOST=settings." + "host)",
         "GHOST=customer." + "com",
         "LOCALHOST=customer." + "com",
     ):
         assert gitleaks_rule_findings(rule, safe_assignment) == []
+
+    for unsafe_literal, expected_secret in (
+        ('KB_HOST="settings.' + 'host"', "settings.host"),
+        ("SERVICE_SERVER='config." + "server'", "config.server"),
+        ('"KB_HOST=settings.' + 'host"', "settings.host"),
+        ("'SERVICE_SERVER=config." + "server'", "config.server"),
+        ("KB_HOST=settings." + "host/v1", "settings.host"),
+        ("SERVICE_SERVER=config." + "server?mode=live", "config.server"),
+    ):
+        assert gitleaks_rule_findings(rule, unsafe_literal) == [expected_secret]
+
+
+def test_actual_gitleaks_blocks_indented_hosts_and_non_source_literals(
+    tmp_path: Path,
+) -> None:
+    """Indentation, quotes, or literal suffixes must not hide deployment domains."""
+    unsafe_domain = "customer." + "com"
+    content = (
+        "  worker."
+        + unsafe_domain
+        + "\nsection:\n    api."
+        + unsafe_domain
+        + "\n  REDIS_HOST: redis."
+        + unsafe_domain
+        + '\nKB_HOST="settings.'
+        + 'host"\nSERVICE_SERVER=\'config.'
+        + "server'\n\"KB_HOST=settings."
+        + 'host"\n\'SERVICE_SERVER=config.'
+        + "server'\nKB_HOST=settings.host/v1"
+        + "\nSERVICE_SERVER=config.server?mode=live"
+        + "\nHOST=settings.host,api."
+        + unsafe_domain
+        + "\nHOST="
+        + unsafe_domain
+        + "\nBASE_URL=kb."
+        + unsafe_domain
+        + "\nORIGIN=tenant."
+        + "museum\nworker."
+        + unsafe_domain
+        + "\napi."
+        + unsafe_domain
+        + "\nENDPOINT=https://"
+        + "api."
+        + unsafe_domain
+        + "/v1\n"
+    )
+
+    findings = actual_gitleaks_findings(tmp_path, {"pressure.txt": content})
+
+    assert sorted(
+        (finding["StartLine"], finding["RuleID"]) for finding in findings
+    ) == [
+        (1, "bare-deployment-domain"),
+        (3, "bare-deployment-domain"),
+        (4, "assigned-network-domain"),
+        (5, "assigned-network-domain"),
+        (6, "assigned-network-domain"),
+        (7, "assigned-network-domain"),
+        (8, "assigned-network-domain"),
+        (9, "assigned-network-domain"),
+        (10, "assigned-network-domain"),
+        (11, "bare-deployment-domain"),
+        (12, "assigned-network-domain"),
+        (13, "assigned-network-domain"),
+        (14, "assigned-network-domain"),
+        (15, "bare-deployment-domain"),
+        (16, "bare-deployment-domain"),
+        (17, "non-example-domain"),
+    ]
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    assert unsafe_domain not in json.dumps(findings)
+
+
+def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
+    tmp_path: Path,
+) -> None:
+    """Source expressions and approved public hosts must remain false-positive safe."""
+    safe_content = (
+        "PUBLIC_ORIGIN=location."
+        + "origin\nPUBLIC_ORIGIN=window."
+        + "location.origin\nSERVICE_SERVER=config."
+        + "server\nKB_HOST=settings."
+        + "host\nPUBLIC_ORIGIN = window."
+        + "location.origin;\nSERVICE_SERVER: config."
+        + "server,\nconfigure(KB_HOST=settings."
+        + "host)\nHOST=example.com\n"
+        "HOST=docs.python.org\n"
+        "BASE_URL=files.pythonhosted.org\n"
+        "api.github.com\n"
+        "api.client.get\n"
+        "https://docs.python.org/\n"
+        "GHOST=customer."
+        + "com\nLOCALHOST=customer."
+        + "com\n"
+    )
+
+    assert actual_gitleaks_findings(tmp_path, {"safe.txt": safe_content}) == []
+
+
+def test_actual_gitleaks_requires_dummy_prefix_and_fixture_path(
+    tmp_path: Path,
+) -> None:
+    """Neither fixture location nor DUMMY_ alone may suppress a finding."""
+    domain = "kb.customer." + "com"
+    dummy_domain = "DUMMY_" + domain
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.txt": "KB_HOST=" + dummy_domain + "\n",
+            "tests/fixtures-synthetic/non-dummy.txt": "KB_HOST=" + domain + "\n",
+            "outside-fixtures.txt": "KB_HOST=" + dummy_domain + "\n",
+        },
+    )
+
+    assert sorted(finding["File"] for finding in findings) == [
+        "outside-fixtures.txt",
+        "tests/fixtures-synthetic/non-dummy.txt",
+    ]
+    assert all(finding["RuleID"] == "assigned-network-domain" for finding in findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
 
 
 @pytest.mark.parametrize(

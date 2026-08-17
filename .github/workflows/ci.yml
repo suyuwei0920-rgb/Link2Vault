@@ -44,6 +44,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9
+        with:
+          version: "0.12.1"
+          enable-cache: true
+      - run: uv sync --frozen --dev
       - name: Install checksum-verified Gitleaks
         shell: bash
         run: |
@@ -55,6 +63,7 @@ jobs:
             "$archive" | sha256sum --check --strict
           tar --extract --gzip --file "$archive" gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+      - run: uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v
       - run: gitleaks git --redact --config .gitleaks.toml
       - run: gitleaks git --redact --config .gitleaks-paths.toml
 
