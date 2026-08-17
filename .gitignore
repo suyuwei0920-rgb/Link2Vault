@@ -1,0 +1,89 @@
+# Environment files (keep the documented template only)
+.env*
+!.env.example
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+ENV/
+
+# Node dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+.svelte-kit/
+coverage/
+
+# SQLite databases and write-ahead-log sidecars
+*.db
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
+
+# Runtime data and user content
+/data/
+/vault/
+/media-tmp/
+/transcripts/
+/logs/
+*.log
+
+# Recordings, video, audio, and transcript exports
+*.mp3
+*.wav
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.opus
+*.wma
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.srt
+*.vtt
+*.transcript.*
+
+# Mobile artifacts and archives
+*.apk
+*.aab
+*.zip
+
+# Signing materials and private keys
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+
+# IDE state and operating-system metadata
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Private design and visual-companion workspace
+.superpowers/
+
+# Synthetic fixtures are permitted only when their SHA-256 is recorded in
+# tests/fixtures-synthetic/MANIFEST.sha256.
+!tests/
+!tests/fixtures-synthetic/
+!tests/fixtures-synthetic/**

@@ -1,0 +1,17 @@
+# Normalize tracked text files across development platforms.
+* text=auto eol=lf
+
+# Treat common binary assets as binary when synthetic test fixtures are added.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.mp3 binary
+*.wav binary
+*.m4a binary
+*.mp4 binary
+*.mov binary
+*.zip binary
+*.apk binary
+*.aab binary
