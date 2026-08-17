@@ -434,6 +434,51 @@ def test_gitleaks_domain_rule_blocks_protocol_and_bare_deployment_hosts() -> Non
 @pytest.mark.parametrize(
     ("content", "expected_secret"),
     [
+        ("KB_HOST=kb." + "customer.com", "kb." + "customer.com"),
+        ("REDIS_HOST: redis." + "customer.com", "redis." + "customer.com"),
+        (
+            "SERVICE_ENDPOINT=service." + "customer.com",
+            "service." + "customer.com",
+        ),
+        (
+            "PUBLIC_ORIGIN: public." + "customer.com",
+            "public." + "customer.com",
+        ),
+        (
+            '"API_BASE_URL": "api.' + 'customer.com"',
+            "api." + "customer.com",
+        ),
+    ],
+)
+def test_gitleaks_assignment_rule_supports_composite_keys(
+    content: str, expected_secret: str
+) -> None:
+    """Requiring exact key names would let common composite keys evade scanning."""
+    assignment_rule = gitleaks_rule("assigned-network-domain")
+    bare_rule = gitleaks_rule("bare-deployment-domain")
+
+    assert gitleaks_rule_findings(assignment_rule, content) == [expected_secret]
+    assert gitleaks_rule_findings(bare_rule, content) == []
+
+
+def test_gitleaks_assignment_rule_has_narrow_source_chain_exceptions() -> None:
+    """Safe source chains need exact exceptions without weakening domain detection."""
+    rule = gitleaks_rule("assigned-network-domain")
+
+    for safe_assignment in (
+        "PUBLIC_ORIGIN=location." + "origin",
+        '"PUBLIC_ORIGIN": "window.' + 'location.origin"',
+        "SERVICE_SERVER=config." + "server",
+        "KB_HOST=settings." + "host",
+        "GHOST=customer." + "com",
+        "LOCALHOST=customer." + "com",
+    ):
+        assert gitleaks_rule_findings(rule, safe_assignment) == []
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_secret"),
+    [
         ("/" + "Users/alice/private", "/" + "Users/alice/private"),
         ("HOME=/" + "Users/bob/work", "/" + "Users/bob/work"),
         ("prefix (/" + "uSeRs/Carol/project)", "/" + "uSeRs/Carol/project"),
