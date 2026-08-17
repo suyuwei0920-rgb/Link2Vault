@@ -199,7 +199,11 @@ def test_audit_tree_rejects_each_sensitive_source_value_independently(
 def test_audit_tree_allows_only_hashed_generated_synthetic_media(tmp_path: Path) -> None:
     """Removing fixture validation would allow arbitrary media into the tree."""
     write_allowlist(tmp_path)
-    media = write_file(tmp_path, "tests/fixtures-synthetic/sample.m4a", b"generated audio")
+    media = write_file(
+        tmp_path,
+        "tests/fixtures-synthetic/sample.m4a",
+        b"\x00\xff\x80\xfeSYNTHETIC\x00\x01",
+    )
     digest = hashlib.sha256(media.read_bytes()).hexdigest()
     write_file(
         tmp_path,
@@ -207,7 +211,64 @@ def test_audit_tree_allows_only_hashed_generated_synthetic_media(tmp_path: Path)
         f"{digest}  sample.m4a generated=true\n",
     )
 
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "-f", "."], cwd=tmp_path, check=True)
+
     assert audit_tree(tmp_path) == []
+
+
+def test_audit_tree_never_allows_manifested_archives_as_synthetic_fixtures(
+    tmp_path: Path,
+) -> None:
+    """A self-attested archive could conceal private files and must stay intrinsic."""
+    write_allowlist(tmp_path)
+    archive = write_file(
+        tmp_path,
+        "tests/fixtures-synthetic/private.zip",
+        b"PK\x03\x04\xff.env\x00sk-" + b"private-fixture-value",
+    )
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    write_file(
+        tmp_path,
+        "tests/fixtures-synthetic/MANIFEST.sha256",
+        f"{digest}  private.zip generated=true\n",
+    )
+    assert findings_by_path(tmp_path)["tests/fixtures-synthetic/private.zip"] == {
+        "binary_artifact"
+    }
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "-f", "."], cwd=tmp_path, check=True)
+
+    assert findings_by_path(tmp_path)["tests/fixtures-synthetic/private.zip"] == {
+        "binary_artifact"
+    }
+
+
+def test_audit_tree_bounds_manifested_media_consistently_in_index_and_worktree(
+    tmp_path: Path,
+) -> None:
+    """Manifest self-attestation must not bypass the public content-size bound."""
+    write_allowlist(tmp_path)
+    media = write_file(
+        tmp_path,
+        "tests/fixtures-synthetic/oversized.m4a",
+        b"x" * (2 * 1024 * 1024 + 1),
+    )
+    digest = hashlib.sha256(media.read_bytes()).hexdigest()
+    write_file(
+        tmp_path,
+        "tests/fixtures-synthetic/MANIFEST.sha256",
+        f"{digest}  oversized.m4a generated=true\n",
+    )
+    assert findings_by_path(tmp_path)["tests/fixtures-synthetic/oversized.m4a"] == {
+        "media_file"
+    }
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "-f", "."], cwd=tmp_path, check=True)
+
+    assert findings_by_path(tmp_path)["tests/fixtures-synthetic/oversized.m4a"] == {
+        "media_file"
+    }
 
 
 def test_audit_tree_does_not_follow_symlinks(tmp_path: Path) -> None:
@@ -227,6 +288,31 @@ def test_audit_tree_does_not_follow_symlinks(tmp_path: Path) -> None:
 
 def initialize_git_repository(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def configure_test_git_identity(root: Path) -> None:
+    subprocess.run(
+        ["git", "config", "user.name", "Link2Vault Tests"], cwd=root, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "tests@example.invalid"],
+        cwd=root,
+        check=True,
+    )
+
+
+def commit_all(root: Path, message: str) -> str:
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", message], cwd=root, check=True
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def test_audit_tree_uses_git_candidates_and_only_reports_force_added_env_files(
@@ -301,6 +387,226 @@ def test_audit_tree_reads_unsafe_worktree_copy_when_staged_blob_is_safe(
     assert worktree_secret not in repr(findings)
 
 
+def test_history_mode_audits_deleted_paths_blobs_modes_and_symlink_metadata(
+    tmp_path: Path,
+) -> None:
+    """A clean tip must not hide an unsafe object retained in reachable history."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "README.md", "# clean public tip\n")
+    initialize_git_repository(tmp_path)
+    configure_test_git_identity(tmp_path)
+    commit_all(tmp_path, "initial public tree")
+
+    clear_secret = "sk-" + "historical-private-value"
+    write_file(tmp_path, "donor-private.txt", "generic donor material\n")
+    write_file(tmp_path, "apps/unsafe.py", "TOKEN = '" + clear_secret + "'\n")
+    write_file(tmp_path, "apps/worker.LOG", "runtime transcript data\n")
+    write_file(
+        tmp_path,
+        "apps/oversized.txt",
+        "x" * (2 * 1024 * 1024 + 1),
+    )
+    (tmp_path / "apps" / "home-link.txt").symlink_to(
+        "/" + "Users/alice/private"
+    )
+    unsafe_commit = commit_all(tmp_path, "add unsafe historical objects")
+
+    for relative in (
+        "donor-private.txt",
+        "apps/unsafe.py",
+        "apps/worker.LOG",
+        "apps/oversized.txt",
+        "apps/home-link.txt",
+    ):
+        (tmp_path / relative).unlink()
+    commit_all(tmp_path, "delete unsafe historical objects")
+
+    assert audit_tree(tmp_path) == []
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY_ROOT / "scripts/audit_public_tree.py"),
+            str(tmp_path),
+            "--history",
+            "HEAD",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert {
+        "not_allowlisted",
+        "credential",
+        "runtime_artifact",
+        "TEXT_TOO_LARGE",
+        "symlink_user_home_target",
+    } <= {
+        line.split(": ", 2)[1] for line in completed.stdout.splitlines()
+    }
+    assert all(
+        unsafe_commit + ":" + relative in completed.stdout
+        for relative in (
+            "donor-private.txt",
+            "apps/unsafe.py",
+            "apps/worker.LOG",
+            "apps/oversized.txt",
+            "apps/home-link.txt",
+        )
+    )
+    assert clear_secret not in completed.stdout
+    assert subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
+def test_history_mode_fails_closed_when_repository_history_is_shallow(
+    tmp_path: Path,
+) -> None:
+    """A depth-one clone cannot certify deleted objects from missing ancestry."""
+    source = tmp_path / "source"
+    clone = tmp_path / "clone"
+    source.mkdir()
+    write_allowlist(source)
+    write_file(source, "README.md", "# public\n")
+    initialize_git_repository(source)
+    configure_test_git_identity(source)
+    commit_all(source, "initial public tree")
+    write_file(source, "apps/unsafe.py", "TOKEN = 'sk-" + "historical-value'\n")
+    commit_all(source, "add historical secret")
+    (source / "apps/unsafe.py").unlink()
+    commit_all(source, "delete historical secret")
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1", source.as_uri(), str(clone)],
+        check=True,
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY_ROOT / "scripts/audit_public_tree.py"),
+            str(clone),
+            "--history",
+            "HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "SHALLOW_HISTORY" in completed.stdout
+    assert "historical-value" not in completed.stdout
+
+
+def test_history_mode_redacts_secret_and_control_characters_in_deleted_paths(
+    tmp_path: Path,
+) -> None:
+    """Unsafe historical filenames must not forge or disclose CI output lines."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "README.md", "# public\n")
+    initialize_git_repository(tmp_path)
+    configure_test_git_identity(tmp_path)
+    commit_all(tmp_path, "initial public tree")
+
+    path_secret = "sk-" + "pathsecretvalue1234"
+    unsafe_path = "donor-" + path_secret + "\t\x1b[31m\n: forged: value.txt"
+    write_file(tmp_path, unsafe_path, "generic donor material\n")
+    unsafe_commit = commit_all(tmp_path, "add hostile historical path")
+    (tmp_path / unsafe_path).unlink()
+    commit_all(tmp_path, "delete hostile historical path")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY_ROOT / "scripts/audit_public_tree.py"),
+            str(tmp_path),
+            "--history",
+            "HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert unsafe_commit in completed.stdout
+    assert path_secret not in completed.stdout
+    assert "\x1b" not in completed.stdout
+    assert "\t" not in completed.stdout
+    assert "<redacted-secret>" in completed.stdout
+    assert "\\t" in completed.stdout
+    assert "\\n" in completed.stdout
+    assert "\\x1b" in completed.stdout
+    assert ": forged: " not in completed.stdout
+
+
+def test_history_mode_rejects_deleted_gitlink_modes(tmp_path: Path) -> None:
+    """A deleted 160000 entry must remain visible to the object-only history gate."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "README.md", "# public\n")
+    initialize_git_repository(tmp_path)
+    configure_test_git_identity(tmp_path)
+    initial_commit = commit_all(tmp_path, "initial public tree")
+
+    subprocess.run(
+        [
+            "git",
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{initial_commit},apps/vendor",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add historical gitlink"],
+        cwd=tmp_path,
+        check=True,
+    )
+    gitlink_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "rm", "-q", "--cached", "apps/vendor"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "delete historical gitlink"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY_ROOT / "scripts/audit_public_tree.py"),
+            str(tmp_path),
+            "--history",
+            "HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert f"{gitlink_commit}:apps/vendor: gitlink: <gitlink>" in completed.stdout
+
+
 def test_machine_allowlist_accepts_packages_and_only_docker_deployments(
     tmp_path: Path,
 ) -> None:
@@ -351,6 +657,80 @@ def test_audit_tree_intrinsically_rejects_force_added_recordings_component(
     assert findings_by_path(tmp_path)["apps/ReCoRdInGs/notes.txt"] == {
         "private_path"
     }
+
+
+INTRINSIC_PRIVATE_ARTIFACTS = (
+    pytest.param("apps/SERVICE.LOG", "runtime_artifact", id="log"),
+    pytest.param("apps/CAPTIONS.SRT", "runtime_artifact", id="srt"),
+    pytest.param("apps/VIDEO.VTT", "runtime_artifact", id="vtt"),
+    pytest.param(
+        "apps/CALL.TRANSCRIPT.JSON", "runtime_artifact", id="transcript-export"
+    ),
+    pytest.param("apps/state.sqlite3-WAL", "database_sidecar", id="sqlite-wal"),
+    pytest.param("apps/state.DB-ShM", "database_sidecar", id="sqlite-shm"),
+    pytest.param(
+        "apps/state.sqlite-JOURNAL", "database_sidecar", id="sqlite-journal"
+    ),
+    pytest.param("apps/__PyCaChE__/module.py", "generated_path", id="pycache"),
+    pytest.param("apps/.PyTest_Cache/state", "generated_path", id="pytest-cache"),
+    pytest.param("apps/.RuFf_CaChE/state", "generated_path", id="ruff-cache"),
+    pytest.param("apps/.VeNv/bin/tool", "generated_path", id="venv"),
+    pytest.param("apps/Node_Modules/pkg.js", "generated_path", id="node-modules"),
+    pytest.param("apps/DIST/bundle.js", "generated_path", id="dist"),
+    pytest.param("apps/Build/result.txt", "generated_path", id="build"),
+    pytest.param("apps/.NEXT/result.txt", "generated_path", id="next"),
+    pytest.param("apps/.Nuxt/result.txt", "generated_path", id="nuxt"),
+    pytest.param("apps/.Svelte-Kit/result.txt", "generated_path", id="svelte-kit"),
+    pytest.param("apps/Coverage/result.txt", "generated_path", id="coverage"),
+    pytest.param("apps/.IDEA/workspace.xml", "ide_state", id="idea"),
+    pytest.param("apps/.VsCode/settings.json", "ide_state", id="vscode"),
+    pytest.param("apps/project.IML", "ide_state", id="iml"),
+    pytest.param("apps/.Ds_Store", "ide_state", id="ds-store"),
+    pytest.param("apps/Thumbs.DB", "ide_state", id="thumbs-db"),
+    pytest.param("apps/module.PYC", "generated_file", id="pyc"),
+    pytest.param("apps/module$PY.CLASS", "generated_file", id="dollar-py-class"),
+    pytest.param("apps/production.ENV", "environment_file", id="named-env"),
+    pytest.param("apps/signing.P8", "signing_material", id="apple-private-key"),
+    pytest.param("apps/signing.PPK", "signing_material", id="putty-private-key"),
+    pytest.param("apps/certificate.CER", "signing_material", id="certificate-cer"),
+    pytest.param("apps/certificate.DER", "signing_material", id="certificate-der"),
+    pytest.param(
+        "apps/profile.MOBILEPROVISION",
+        "signing_material",
+        id="mobile-provisioning-profile",
+    ),
+)
+
+
+@pytest.mark.parametrize(("relative", "expected_rule"), INTRINSIC_PRIVATE_ARTIFACTS)
+def test_audit_tree_intrinsically_rejects_private_artifacts_from_staged_blobs(
+    tmp_path: Path, relative: str, expected_rule: str
+) -> None:
+    """Deleting an ignored artifact after force-add must not mask its staged blob."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, ".gitignore", "apps/\n")
+    artifact = write_file(tmp_path, relative, "synthetic private state\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(
+        ["git", "add", ".public-allowlist", ".gitignore"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "add", "-f", relative], cwd=tmp_path, check=True)
+    artifact.unlink()
+
+    assert findings_by_path(tmp_path)[relative] == {expected_rule}
+
+
+@pytest.mark.parametrize(("relative", "expected_rule"), INTRINSIC_PRIVATE_ARTIFACTS)
+def test_audit_tree_intrinsically_rejects_private_artifacts_from_worktree(
+    tmp_path: Path, relative: str, expected_rule: str
+) -> None:
+    """An untracked worktree candidate must be denied without an index finding."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, relative, "synthetic private state\n")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", ".public-allowlist"], cwd=tmp_path, check=True)
+
+    assert findings_by_path(tmp_path)[relative] == {expected_rule}
 
 
 def test_audit_tree_rejects_nested_git_control_directories_in_git_mode(
@@ -434,6 +814,19 @@ def test_audit_tree_validates_symlink_metadata_without_following_targets(
     assert findings["apps/broken-link.txt"] == {"broken_symlink"}
 
 
+def test_audit_tree_accepts_a_staged_symlink_to_an_allowlisted_directory(
+    tmp_path: Path,
+) -> None:
+    """Index metadata must recognize directories represented only by tree prefixes."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "apps/public-dir/target.txt", "safe\n")
+    (tmp_path / "apps" / "public-link").symlink_to("public-dir")
+    initialize_git_repository(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+
+    assert audit_tree(tmp_path) == []
+
+
 def test_audit_tree_matches_private_names_and_extensions_case_insensitively(
     tmp_path: Path,
 ) -> None:
@@ -476,6 +869,18 @@ def test_audit_tree_matches_private_names_and_extensions_case_insensitively(
         ),
         (
             "IPV6 = 'https://" + "[2001:db8::dead]/v1'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "IPV6_ZONE = 'https://" + "[fe80::1%25en0]/v1'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "ROOT_DOT = 'https://" + "api.customer.finance./v1'\n",
+            {"deployment_endpoint"},
+        ),
+        (
+            "DSN_ROOT_DOT = 'postgresql://" + "db.customer.finance./app'\n",
             {"deployment_endpoint"},
         ),
         (
@@ -525,6 +930,183 @@ def test_audit_tree_allows_documented_hosts_inside_url_variants(tmp_path: Path) 
         "URLS = ['http://localhost?check=yes', 'https://127.0.0.1:8000/path', "
         "'http://[::1]/status', 'http://192.0.2.4?example=yes', "
         "'https://198.51.100.6/#reference', 'http://203.0.113.7/docs']\n",
+    )
+
+    assert audit_tree(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "scheme",
+    [
+        "postgresql",
+        "postgresql+asyncpg",
+        "postgresql+psycopg",
+        "postgres",
+        "mysql",
+        "mysql+aiomysql",
+        "mysql+pymysql",
+        "mariadb",
+        "mariadb+mariadbconnector",
+        "redis",
+        "redis+sentinel",
+        "rediss",
+        "mongodb",
+        "mongodb+srv",
+        "amqp",
+        "amqps",
+        "kafka",
+        "nats",
+    ],
+)
+def test_audit_tree_rejects_reviewed_production_dsn_schemes(
+    tmp_path: Path, scheme: str
+) -> None:
+    """Limiting endpoint inspection to HTTP(S) would expose production DSNs."""
+    write_allowlist(tmp_path)
+    unsafe_host = "db.customer." + "finance"
+    write_file(
+        tmp_path,
+        "apps/dsn.py",
+        "CONNECTION = '" + scheme + "://" + unsafe_host + "/application'\n",
+    )
+
+    findings = audit_tree(tmp_path)
+
+    assert {finding.rule for finding in findings} == {"deployment_endpoint"}
+    assert unsafe_host not in repr(findings)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        pytest.param(
+            "DATABASE_URL",
+            "postgresql" + "://db.customer.finance/application",
+            id="database-url-dsn",
+        ),
+        pytest.param(
+            "CACHE_URI",
+            "rediss" + "://cache.customer.technology/0",
+            id="composite-uri-dsn",
+        ),
+        pytest.param(
+            "EVENT_DSN",
+            "mongodb+srv" + "://cluster.customer.xn--fiqs8s/app",
+            id="composite-dsn-punycode",
+        ),
+        pytest.param(
+            "WEBHOOK",
+            "hooks.customer." + "solutions",
+            id="exact-webhook-host",
+        ),
+        pytest.param(
+            "ORDER_WEBHOOK_URL",
+            "hooks.customer." + "technology",
+            id="composite-webhook-url-host",
+        ),
+        pytest.param(
+            "WEBHOOK",
+            "[fd00::8]",
+            id="bare-private-ipv6-webhook",
+        ),
+        pytest.param(
+            "SERVICE_URI",
+            "[fe80::1%25en0]:8080",
+            id="bare-link-local-zone-ipv6-uri",
+        ),
+        pytest.param(
+            "DATABASE_URL",
+            "[fd12:3456::9]:5432",
+            id="bare-private-ipv6-url",
+        ),
+    ],
+)
+def test_audit_tree_rejects_explicit_endpoint_assignment_keys(
+    tmp_path: Path, key: str, value: str
+) -> None:
+    """Explicit URL, URI, DSN, and webhook keys must own arbitrary endpoint hosts."""
+    write_allowlist(tmp_path)
+    write_file(tmp_path, "apps/endpoints.py", key + " = '" + value + "'\n")
+
+    findings = audit_tree(tmp_path)
+
+    assert "deployment_endpoint" in {finding.rule for finding in findings}
+    assert value not in repr(findings)
+
+
+def test_audit_tree_redacts_dsn_userinfo_and_sensitive_query_values(
+    tmp_path: Path,
+) -> None:
+    """Endpoint findings must never echo DSN userinfo or query credentials."""
+    write_allowlist(tmp_path)
+    unsafe_host = "db.customer." + "finance"
+    username = "private-user"
+    password = "private-password"
+    token = "private-query-token"
+    dsn = (
+        "postgresql+asyncpg://"
+        + username
+        + ":"
+        + password
+        + "@"
+        + unsafe_host
+        + "/app?token="
+        + token
+    )
+    write_file(tmp_path, "apps/credentials.py", "DATABASE_URL = '" + dsn + "'\n")
+
+    findings = audit_tree(tmp_path)
+
+    assert {finding.rule for finding in findings} == {
+        "credential",
+        "deployment_endpoint",
+    }
+    assert all(
+        clear_value not in repr(findings)
+        for clear_value in (username, password, token, unsafe_host, dsn)
+    )
+
+
+@pytest.mark.parametrize(
+    "private_host",
+    [
+        "10.0." + "0.8",
+        "169.254." + "169.254",
+        "[fd00::8]",
+        "service.internal",
+    ],
+)
+def test_audit_tree_rejects_ssrf_private_dsn_hosts(
+    tmp_path: Path, private_host: str
+) -> None:
+    """Private and link-local DSN targets are never canonical public examples."""
+    write_allowlist(tmp_path)
+    write_file(
+        tmp_path,
+        "apps/private_dsn.py",
+        "DATABASE_URL = 'redis://" + private_host + "/0'\n",
+    )
+
+    assert "deployment_endpoint" in {
+        finding.rule for finding in audit_tree(tmp_path)
+    }
+
+
+def test_audit_tree_allows_only_safe_reserved_or_canonical_endpoint_assignments(
+    tmp_path: Path,
+) -> None:
+    """Canonical and reserved hosts remain useful only without embedded credentials."""
+    write_allowlist(tmp_path)
+    write_file(
+        tmp_path,
+        "apps/safe_endpoints.py",
+        "DATABASE_URL = 'postgresql://localhost:5432/application'\n"
+        "DRIVER_URL = 'postgresql+asyncpg://localhost:5432/application'\n"
+        "CACHE_URI = 'redis://cache.example.test/0'\n"
+        "WEBHOOK_URL = 'hooks.example.invalid'\n"
+        "WEBHOOK = '[::1]'\n"
+        "SERVICE_URI = '[::1]:8080'\n"
+        "SOURCE_URL = 'https://docs.python.org/3/'\n",
     )
 
     assert audit_tree(tmp_path) == []
@@ -602,6 +1184,9 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
     assert "uv run python scripts/audit_public_tree.py ." in commands_by_job[
         "public-tree-audit"
     ]
+    assert "uv run python scripts/audit_public_tree.py . --history HEAD" in (
+        commands_by_job["public-tree-audit"]
+    )
     assert {
         "uv run pytest tests/repository/test_public_tree_audit.py -k actual_gitleaks -v",
         "gitleaks git --redact --log-opts=HEAD --config .gitleaks.toml",
@@ -613,6 +1198,11 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
         "docker info",
         "uv run pytest tests/deploy/test_compose_contract.py -v",
     } <= commands_by_job["docker-contract"]
+    assert jobs["docker-contract"]["runs-on"] == "${{ matrix.os }}"
+    assert jobs["docker-contract"]["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"os": ["ubuntu-22.04", "ubuntu-24.04"]},
+    }
 
     gitleaks_checkout = next(
         step
@@ -623,12 +1213,21 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
         "fetch-depth": 0,
         "persist-credentials": False,
     }
+    history_checkout = next(
+        step
+        for step in jobs["public-tree-audit"]["steps"]
+        if step.get("uses") == "actions/checkout@v7"
+    )
+    assert history_checkout["with"] == {
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
     assert jobs["dependency-review"]["if"] == "github.event_name == 'pull_request'"
 
     allowed_action_pins = {
         "actions/checkout@v7",
         "actions/setup-python@v6",
-        "astral-sh/setup-uv@v9",
+        "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
         "actions/dependency-review-action@v5",
     }
     used_actions = {
@@ -663,7 +1262,8 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
         step
         for job in jobs.values()
         for step in job.get("steps", [])
-        if step.get("uses") == "astral-sh/setup-uv@v9"
+        if step.get("uses")
+        == "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
     ]
     assert setup_uv_steps
     assert all(
@@ -880,7 +1480,7 @@ def test_actual_gitleaks_blocks_indented_hosts_and_non_source_literals(
         + "/v1\n"
     )
 
-    findings = actual_gitleaks_findings(tmp_path, {"pressure.txt": content})
+    findings = actual_gitleaks_findings(tmp_path, {"apps/pressure.py": content})
     owned_findings = [
         finding
         for finding in findings
@@ -924,7 +1524,7 @@ def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
         + "host\nPUBLIC_ORIGIN = window."
         + "location.origin;\nSERVICE_SERVER: config."
         + "server,\nconfigure(KB_HOST=settings."
-        + "host)\napi.client.get\nGHOST=customer."
+        + "host)\napi.client.get\napi.logger.info\nGHOST=customer."
         + "com\nLOCALHOST=customer."
         + "com\n"
     )
@@ -943,6 +1543,251 @@ def test_actual_gitleaks_allows_unquoted_source_chains_and_public_hosts(
             "docs/public-hosts.txt": public_host_content,
         },
     ) == []
+
+
+def test_actual_gitleaks_blocks_reviewed_dsn_schemes_and_redacts_full_values(
+    tmp_path: Path,
+) -> None:
+    """HTTP-only matching would leak common database, cache, and broker DSNs."""
+    unsafe_host = "db.customer." + "finance"
+    schemes = (
+        "postgresql",
+        "postgresql+asyncpg",
+        "postgresql+psycopg",
+        "postgres",
+        "mysql",
+        "mysql+aiomysql",
+        "mysql+pymysql",
+        "mariadb",
+        "mariadb+mariadbconnector",
+        "redis",
+        "redis+sentinel",
+        "rediss",
+        "mongodb",
+        "mongodb+srv",
+        "amqp",
+        "amqps",
+        "kafka",
+        "nats",
+    )
+    endpoints = {
+        scheme: scheme + "://" + unsafe_host + "/application"
+        for scheme in schemes
+    }
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "apps/dsn-" + scheme.replace("+", "-") + ".py": (
+                "CONNECTION = '" + endpoint + "'\n"
+            )
+            for scheme, endpoint in endpoints.items()
+        },
+    )
+
+    dsn_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "production-dsn-endpoint"
+    ]
+    assert len(dsn_findings) == len(schemes)
+    assert all(finding["Secret"] == "REDACTED" for finding in dsn_findings)
+    report = json.dumps(findings)
+    assert all(endpoint not in report for endpoint in endpoints.values())
+    assert unsafe_host not in report
+
+
+def test_actual_gitleaks_blocks_explicit_url_uri_dsn_and_webhook_assignments(
+    tmp_path: Path,
+) -> None:
+    """Explicit endpoint keys must detect both scheme URLs and bare Punycode hosts."""
+    values = {
+        "DATABASE_URL": "postgresql" + "://db.customer.finance/application",
+        "CACHE_URI": "rediss" + "://cache.customer.technology/0",
+        "EVENT_DSN": "mongodb+srv" + "://cluster.customer.xn--fiqs8s/app",
+        "WEBHOOK": "hooks." + "customer.solutions",
+        "ORDER_WEBHOOK_URL": "hooks." + "customer.technology",
+        "PRIVATE_WEBHOOK": "[fd00" + "::8]",
+        "SERVICE_URI": "[fe80" + "::1%25en0]:8080",
+        "REPLICA_URL": "[fd12" + ":3456::9]:5432",
+    }
+    content = "\n".join(key + "='" + value + "'" for key, value in values.items())
+
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {"apps/explicit-endpoints.py": content + "\n"},
+    )
+    assigned_findings = [
+        finding
+        for finding in findings
+        if finding["RuleID"] == "assigned-production-endpoint"
+    ]
+
+    line_counts = {
+        line: sum(finding["StartLine"] == line for finding in assigned_findings)
+        for line in range(1, len(values) + 1)
+    }
+    assert line_counts == {line: 1 for line in range(1, len(values) + 1)}, [
+        (finding["StartColumn"], finding["EndColumn"], finding["Match"])
+        for finding in assigned_findings
+        if finding["StartLine"] == 7
+    ]
+    assert all(finding["Secret"] == "REDACTED" for finding in assigned_findings)
+    report = json.dumps(findings)
+    assert all(value not in report for value in values.values())
+
+
+def test_actual_gitleaks_dsn_userinfo_query_and_private_hosts_are_fully_redacted(
+    tmp_path: Path,
+) -> None:
+    """Userinfo, query credentials, and SSRF-private hosts must not survive reports."""
+    username = "private-user"
+    password = "private-password"
+    token = "private-query-token"
+    unsafe_host = "db.customer." + "finance"
+    credentialed = (
+        "postgresql://"
+        + username
+        + ":"
+        + password
+        + "@"
+        + unsafe_host
+        + "/app?token="
+        + token
+    )
+    private_endpoints = {
+        "apps/private-ip.py": "redis://" + "10.0." + "0.8/0",
+        "apps/link-local.py": (
+            "redis://" + "169.254." + "169.254/0"
+        ),
+        "apps/private-v6.py": "redis://" + "[fd00::8]/0",
+    }
+    files = {
+        "apps/credentialed.py": "DATABASE_URL='" + credentialed + "'\n",
+        **{
+            path: "DATABASE_URL='" + endpoint + "'\n"
+            for path, endpoint in private_endpoints.items()
+        },
+    }
+
+    findings = actual_gitleaks_findings(tmp_path, files)
+
+    assert len(
+        [
+            finding
+            for finding in findings
+            if finding["RuleID"] == "production-dsn-endpoint"
+        ]
+    ) == 4
+    report = json.dumps(findings)
+    assert all(
+        clear_value not in report
+        for clear_value in (
+            username,
+            password,
+            token,
+            unsafe_host,
+            credentialed,
+            *private_endpoints.values(),
+        )
+    )
+
+
+def test_actual_gitleaks_endpoint_allowlists_require_safe_host_and_no_credentials(
+    tmp_path: Path,
+) -> None:
+    """Reserved/canonical endpoint exceptions must not excuse embedded credentials."""
+    safe_values = {
+        "DATABASE_URL": "postgresql://localhost:5432/application",
+        "DRIVER_URL": "postgresql+asyncpg://localhost:5432/application",
+        "CACHE_URI": "redis://cache.example.test/0",
+        "WEBHOOK_URL": "hooks.example.invalid",
+        "SOURCE_URL": "https://docs.python.org/3/",
+        "REGISTRY_URL": "https://ghcr.io/example/image",
+        "FRAMEWORK_URI": "https://fastapi.tiangolo.com/tutorial/",
+        "RAW_URL": "https://raw.githubusercontent.com/example/test/main/file",
+        "LOCAL_WEBHOOK": "[" + "::1]",
+        "LOCAL_SERVICE_URI": "[" + "::1]:8080",
+    }
+    safe_content = "\n".join(
+        key + "='" + value + "'" for key, value in safe_values.items()
+    )
+    credentialed_safe_host = (
+        "postgresql+asyncpg://"
+        + "private-user"
+        + ":"
+        + "private-password"
+        + "@localhost/application"
+    )
+
+    assert actual_gitleaks_findings(
+        tmp_path / "safe", {"apps/safe.py": safe_content + "\n"}
+    ) == []
+
+    unsafe_findings = actual_gitleaks_findings(
+        tmp_path / "credentialed",
+        {
+            "apps/unsafe.py": (
+                "DATABASE_URL='" + credentialed_safe_host + "'\n"
+            )
+        },
+    )
+    assert "production-dsn-endpoint" in {
+        finding["RuleID"] for finding in unsafe_findings
+    }
+    assert credentialed_safe_host not in json.dumps(unsafe_findings)
+
+
+def test_actual_gitleaks_endpoint_dummy_allowlists_require_path_and_prefix(
+    tmp_path: Path,
+) -> None:
+    """New endpoint rules retain fixture-path plus DUMMY_ AND semantics."""
+    endpoint = "postgresql" + "://db.customer.finance/application"
+    dummy_endpoint = "DUMMY_" + endpoint
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            "tests/fixtures-synthetic/safe.py": (
+                "DATABASE_URL='" + dummy_endpoint + "'\n"
+            ),
+            "tests/fixtures-synthetic/non-dummy.py": (
+                "DATABASE_URL='" + endpoint + "'\n"
+            ),
+            "apps/dummy-outside.py": "DATABASE_URL='" + dummy_endpoint + "'\n",
+            "tests/fixtures-synthetic/safe-ipv6.py": (
+                "WEBHOOK='DUMMY_[fd00" + "::8]'\n"
+            ),
+            "tests/fixtures-synthetic/non-dummy-ipv6.py": (
+                "WEBHOOK='[fd00" + "::8]'\n"
+            ),
+            "apps/dummy-ipv6-outside.py": (
+                "WEBHOOK='DUMMY_[fd00" + "::8]'\n"
+            ),
+        },
+    )
+
+    findings_by_file: dict[str, set[str]] = {}
+    for finding in findings:
+        findings_by_file.setdefault(str(finding["File"]), set()).add(
+            str(finding["RuleID"])
+        )
+
+    assert "tests/fixtures-synthetic/safe.py" not in findings_by_file
+    assert "tests/fixtures-synthetic/safe-ipv6.py" not in findings_by_file
+    assert {
+        "production-dsn-endpoint",
+        "assigned-production-endpoint",
+    } <= findings_by_file["tests/fixtures-synthetic/non-dummy.py"]
+    assert {
+        "production-dsn-endpoint",
+        "assigned-production-endpoint",
+    } <= findings_by_file["apps/dummy-outside.py"]
+    assert findings_by_file["tests/fixtures-synthetic/non-dummy-ipv6.py"] == {
+        "assigned-production-endpoint"
+    }
+    assert findings_by_file["apps/dummy-ipv6-outside.py"] == {
+        "assigned-production-endpoint"
+    }
 
 
 def test_actual_gitleaks_blocks_domain_keys_and_docs_config_apex_domains(
@@ -1247,6 +2092,381 @@ def test_actual_gitleaks_apex_domain_avoids_companion_duplicates(
     report = json.dumps(findings)
     assert first.split("=", 1)[-1] not in report
     assert second.split("=", 1)[-1] not in report
+
+
+def domain_sequence_content(
+    family: str, domains: list[str], separators: list[str]
+) -> str:
+    prefixes = {
+        "bare": ["" for _domain in domains],
+        "domain": [
+            "DOMAIN=",
+            "PUBLIC_DOMAIN=",
+            "TENANT_DOMAIN=",
+            "CUSTOMER_DOMAIN=",
+            "SERVICE_DOMAIN=",
+        ][: len(domains)],
+        "network": ["HOST=", "ORIGIN=", "API_HOST=", "SERVER=", "ENDPOINT="][
+            : len(domains)
+        ],
+    }[family]
+    values = [prefix + domain for prefix, domain in zip(prefixes, domains, strict=True)]
+    return "".join(
+        value + (separators[index] if index < len(separators) else "")
+        for index, value in enumerate(values)
+    ) + "\n"
+
+
+DOMAIN_SEQUENCE_FAMILIES = (
+    pytest.param(
+        "bare",
+        "docs/domain-sequence.md",
+        {"bare-apex-domain", "adjacent-bare-apex-domain"},
+        id="bare-prose",
+    ),
+    pytest.param(
+        "domain",
+        "apps/domain-sequence.py",
+        {"assigned-domain-name", "adjacent-assigned-domain-name"},
+        id="domain-assignments",
+    ),
+    pytest.param(
+        "network",
+        "apps/network-sequence.py",
+        {"assigned-network-domain", "adjacent-assigned-network-domain"},
+        id="network-assignments",
+    ),
+)
+
+
+@pytest.mark.parametrize(("family", "path", "owning_rules"), DOMAIN_SEQUENCE_FAMILIES)
+@pytest.mark.parametrize("separator", [" ", "\t", ",", ";"])
+def test_actual_gitleaks_domain_sequences_own_four_values_exactly_once(
+    tmp_path: Path,
+    family: str,
+    path: str,
+    owning_rules: set[str],
+    separator: str,
+) -> None:
+    """A one-character delimiter must not create an unsafe fourth-value gap."""
+    domains = [
+        "alpha.customer." + "finance",
+        "beta.customer." + "technology",
+        "gamma.customer." + "solutions",
+        "delta.customer." + "company",
+    ]
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            path: domain_sequence_content(
+                family, domains, [separator] * (len(domains) - 1)
+            )
+        },
+    )
+
+    assert len(findings) == len(domains)
+    assert {str(finding["RuleID"]) for finding in findings} == owning_rules
+    spans = {
+        (
+            finding["File"],
+            finding["StartLine"],
+            finding["StartColumn"],
+            finding["EndLine"],
+            finding["EndColumn"],
+        )
+        for finding in findings
+    }
+    assert len(spans) == len(findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains)
+
+
+@pytest.mark.parametrize(
+    ("domains", "separators"),
+    [
+        pytest.param(
+            [
+                "api.customer." + "finance",
+                "worker.customer." + "technology",
+                "hooks.customer." + "solutions",
+                "service.customer." + "company",
+            ],
+            [";", ",", " "],
+            id="arbitrary-tld-single-separators",
+        ),
+        pytest.param(
+            [
+                "api.customer." + "com",
+                "worker.customer." + "net",
+                "hooks.customer." + "org",
+                "service.customer." + "io",
+                "cdn.customer." + "dev",
+            ],
+            ["; ", ", ", "\t\t", " "],
+            id="finite-tld-one-multi-separators",
+        ),
+    ],
+)
+def test_actual_gitleaks_deployment_prefix_sequences_have_one_finding_per_domain(
+    tmp_path: Path, domains: list[str], separators: list[str]
+) -> None:
+    """Overlapping deployment and apex families must not duplicate domain spans."""
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {"docs/deployment-sequence.md": domain_sequence_content("bare", domains, separators)},
+    )
+
+    assert len(findings) == len(domains)
+    spans = {
+        (
+            finding["File"],
+            finding["StartLine"],
+            finding["StartColumn"],
+            finding["EndLine"],
+            finding["EndColumn"],
+        )
+        for finding in findings
+    }
+    assert len(spans) == len(findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains)
+
+
+@pytest.mark.parametrize(
+    ("path", "owner"),
+    [
+        ("LICENSE", "bare-deployment-domain"),
+        ("Makefile", "bare-deployment-domain"),
+        ("apps/api/Dockerfile", "bare-apex-domain"),
+        ("scripts/deploy.sh", "bare-deployment-domain"),
+        ("docs/example.go", "bare-deployment-domain-docs-source"),
+        ("config/settings.json", "bare-apex-domain"),
+        ("Makefile.md", "bare-apex-domain"),
+    ],
+)
+def test_actual_gitleaks_deployment_domain_path_ownership_is_exactly_once(
+    tmp_path: Path, path: str, owner: str
+) -> None:
+    """Root, config, normal source, and docs-source paths each need one owner."""
+    domain = "api.customer." + "com"
+    findings = actual_gitleaks_findings(tmp_path, {path: domain + "\n"})
+
+    assert len(findings) == 1
+    assert findings[0]["RuleID"] == owner
+    assert findings[0]["Secret"] == "REDACTED"
+    assert domain not in json.dumps(findings)
+
+
+@pytest.mark.parametrize(
+    ("path", "owner"),
+    [
+        ("apps/source.py", "bare-deployment-domain"),
+        ("docs/example.go", "bare-deployment-domain-docs-source"),
+    ],
+)
+def test_actual_gitleaks_source_deployment_sequences_own_every_value_once(
+    tmp_path: Path, path: str, owner: str
+) -> None:
+    """Source owners must not consume separators and skip even-numbered hosts."""
+    domains = [
+        "api.customer." + "com",
+        "worker.customer." + "net",
+        "hooks.customer." + "org",
+        "service.customer." + "io",
+        "cdn.customer." + "dev",
+    ]
+    content = domain_sequence_content("bare", domains, [";", ", ", "\t\t", " "])
+
+    findings = actual_gitleaks_findings(tmp_path, {path: content})
+
+    assert len(findings) == len(domains)
+    assert {finding["RuleID"] for finding in findings} == {owner}
+    assert len(
+        {
+            (
+                finding["StartLine"],
+                finding["StartColumn"],
+                finding["EndLine"],
+                finding["EndColumn"],
+            )
+            for finding in findings
+        }
+    ) == len(findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains)
+
+
+@pytest.mark.parametrize("path", ["apps/source.dart", "docs/example.scala"])
+def test_actual_gitleaks_source_logging_member_allowance_is_language_neutral(
+    tmp_path: Path, path: str
+) -> None:
+    """Every supported source owner needs the same exact logging-chain allowance."""
+    assert actual_gitleaks_findings(tmp_path, {path: "api.logger.info\n"}) == []
+
+
+@pytest.mark.parametrize(("family", "path", "owning_rules"), DOMAIN_SEQUENCE_FAMILIES)
+@pytest.mark.parametrize(
+    "separators",
+    [
+        [";", " ", ",", "\t"],
+        ["  ", "; ", "\t\t", ", "],
+        [", ", "\t", ";  ", " "],
+    ],
+    ids=["varied-single", "all-multi", "mixed-one-multi"],
+)
+def test_actual_gitleaks_domain_sequences_own_five_varied_values_without_duplicates(
+    tmp_path: Path,
+    family: str,
+    path: str,
+    owning_rules: set[str],
+    separators: list[str],
+) -> None:
+    """Finite ordinal companions must not be required for longer mixed sequences."""
+    domains = [
+        "alpha.customer." + "finance",
+        "beta.customer." + "technology",
+        "gamma.customer." + "solutions",
+        "delta.customer." + "company",
+        "epsilon.customer." + "international",
+    ]
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {path: domain_sequence_content(family, domains, separators)},
+    )
+
+    assert len(findings) == len(domains)
+    assert {str(finding["RuleID"]) for finding in findings} <= owning_rules
+    spans = {
+        (
+            finding["File"],
+            finding["StartLine"],
+            finding["StartColumn"],
+            finding["EndLine"],
+            finding["EndColumn"],
+        )
+        for finding in findings
+    }
+    assert len(spans) == len(findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains)
+
+
+@pytest.mark.parametrize(("family", "path", "owning_rules"), DOMAIN_SEQUENCE_FAMILIES)
+def test_actual_gitleaks_domain_sequences_block_unsafe_tail_after_three_safe_values(
+    tmp_path: Path,
+    family: str,
+    path: str,
+    owning_rules: set[str],
+) -> None:
+    """Three allowlisted prefixes must not suppress unsafe fourth and fifth values."""
+    safe_domains = ["example.test", "docs.python.org", "api.github.com"]
+    unsafe_tail = [
+        "delta.customer." + "company",
+        "epsilon.customer." + "international",
+    ]
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            path: domain_sequence_content(
+                family, safe_domains + unsafe_tail, [";", " ", ",", "\t"]
+            )
+        },
+    )
+
+    assert len(findings) == len(unsafe_tail)
+    assert {str(finding["RuleID"]) for finding in findings} <= owning_rules
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in safe_domains + unsafe_tail)
+
+
+@pytest.mark.parametrize(("family", "path", "owning_rules"), DOMAIN_SEQUENCE_FAMILIES)
+def test_actual_gitleaks_domain_sequences_block_unsafe_fourth_after_safe_prefix(
+    tmp_path: Path,
+    family: str,
+    path: str,
+    owning_rules: set[str],
+) -> None:
+    """A safe three-value prefix must not hide the final unsafe fourth value."""
+    safe_domains = ["example.test", "docs.python.org", "api.github.com"]
+    unsafe_domain = "delta.customer." + "company"
+    findings = actual_gitleaks_findings(
+        tmp_path,
+        {
+            path: domain_sequence_content(
+                family, safe_domains + [unsafe_domain], [";", " ", ","]
+            )
+        },
+    )
+
+    assert len(findings) == 1
+    assert {str(finding["RuleID"]) for finding in findings} <= owning_rules
+    assert findings[0]["Secret"] == "REDACTED"
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in safe_domains + [unsafe_domain])
+
+
+@pytest.mark.parametrize(("family", "path", "owning_rules"), DOMAIN_SEQUENCE_FAMILIES)
+def test_actual_gitleaks_domain_sequences_preserve_dummy_path_and_value_semantics(
+    tmp_path: Path,
+    family: str,
+    path: str,
+    owning_rules: set[str],
+) -> None:
+    """Long-sequence ownership keeps fixture path AND DUMMY_ semantics."""
+    del path
+    domains = [
+        "alpha.customer." + "finance",
+        "beta.customer." + "technology",
+        "gamma.customer." + "solutions",
+        "delta.customer." + "company",
+        "epsilon.customer." + "international",
+    ]
+    dummy_domains = ["DUMMY_" + domain for domain in domains]
+    extension = ".md" if family == "bare" else ".py"
+    files = {
+        "tests/fixtures-synthetic/safe-sequence" + extension: (
+            domain_sequence_content(family, dummy_domains, [";", " ", ",", "\t"])
+        ),
+        "tests/fixtures-synthetic/unsafe-tail-sequence" + extension: (
+            domain_sequence_content(
+                family,
+                dummy_domains[:3] + domains[3:],
+                [";", " ", ",", "\t"],
+            )
+        ),
+        "docs/dummy-outside-sequence.md"
+        if family == "bare"
+        else "apps/dummy-outside-sequence.py": domain_sequence_content(
+            family, dummy_domains, [";", " ", ",", "\t"]
+        ),
+    }
+    findings = actual_gitleaks_findings(tmp_path, files)
+    findings_by_file: dict[str, list[dict[str, object]]] = {}
+    for finding in findings:
+        findings_by_file.setdefault(str(finding["File"]), []).append(finding)
+
+    assert "tests/fixtures-synthetic/safe-sequence" + extension not in findings_by_file
+    unsafe_fixture_findings = findings_by_file[
+        "tests/fixtures-synthetic/unsafe-tail-sequence" + extension
+    ]
+    assert len(unsafe_fixture_findings) == 2
+    assert {str(finding["RuleID"]) for finding in unsafe_fixture_findings} <= (
+        owning_rules
+    )
+    outside_path = (
+        "docs/dummy-outside-sequence.md"
+        if family == "bare"
+        else "apps/dummy-outside-sequence.py"
+    )
+    assert len(findings_by_file[outside_path]) == len(dummy_domains)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
+    report = json.dumps(findings)
+    assert all(domain not in report for domain in domains + dummy_domains)
 
 
 @pytest.mark.parametrize(
@@ -1796,7 +3016,7 @@ def test_actual_gitleaks_apex_domain_multiline_companion_dummy_cross_products(
     assert all(finding["StartLine"] == 2 for finding in findings)
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
     assert all(
-        finding["StartColumn"] == 1 and finding["Match"] == "REDACTED)"
+        finding["Match"] == "REDACTED"
         for finding in findings
         if finding["RuleID"] == companion_rule
     )
@@ -1845,21 +3065,13 @@ def test_actual_gitleaks_apex_domain_deployment_prefix_supports_arbitrary_tlds(
         tmp_path,
         {"docs/deployment-hosts.txt": "\n".join(unsafe_domains) + "\n"},
     )
-    deployment_findings = [
-        finding
-        for finding in findings
-        if finding["RuleID"]
-        in {"bare-deployment-domain", "bare-deployment-domain-arbitrary"}
-    ]
-
     assert sorted(
-        (finding["StartLine"], finding["RuleID"])
-        for finding in deployment_findings
+        (finding["StartLine"], finding["RuleID"]) for finding in findings
     ) == [
-        (1, "bare-deployment-domain-arbitrary"),
-        (2, "bare-deployment-domain"),
+        (1, "bare-apex-domain"),
+        (2, "bare-apex-domain"),
     ]
-    assert all(finding["Secret"] == "REDACTED" for finding in deployment_findings)
+    assert all(finding["Secret"] == "REDACTED" for finding in findings)
     report = json.dumps(findings)
     assert all(unsafe_domain not in report for unsafe_domain in unsafe_domains)
 
@@ -2089,8 +3301,9 @@ def test_actual_gitleaks_apex_domain_keeps_explicit_rules_in_docs_source_files(
     ) == [
         (1, "assigned-domain-name"),
         (2, "assigned-network-domain"),
+        (3, "assigned-production-endpoint"),
         (3, "non-example-domain"),
-        (4, "bare-deployment-domain"),
+        (4, "bare-deployment-domain-docs-source"),
     ]
     assert all(finding["Secret"] == "REDACTED" for finding in findings)
 
@@ -2104,7 +3317,9 @@ def test_actual_gitleaks_apex_domain_restores_source_deployment_prefix_rule(
     findings = actual_gitleaks_findings(
         tmp_path,
         {
-            "apps/source.py": deployment_domain + "\napi.client.get\n",
+            "apps/source.py": (
+                "api.logger.info\n" + deployment_domain + "\napi.client.get\n"
+            ),
         },
     )
 
@@ -2157,6 +3372,47 @@ def test_actual_gitleaks_apex_domain_requires_valid_dns_label_boundaries(
         tmp_path,
         {"docs/invalid-domains.md": "\n".join(invalid_domains) + "\n"},
     ) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "content", "owning_rule", "companion_rule"),
+    [
+        pytest.param(
+            "docs/invalid-pair.md",
+            "release." + "finance;portal.xn--ab-\n",
+            "bare-apex-domain",
+            "adjacent-bare-apex-domain",
+            id="bare-prose",
+        ),
+        pytest.param(
+            "apps/invalid-domain-pair.py",
+            "DOMAIN=release." + "finance;PUBLIC_DOMAIN=portal.xn--ab-\n",
+            "assigned-domain-name",
+            "adjacent-assigned-domain-name",
+            id="domain-assignments",
+        ),
+        pytest.param(
+            "apps/invalid-network-pair.py",
+            "HOST=release." + "finance;ORIGIN=portal.xn--ab-\n",
+            "assigned-network-domain",
+            "adjacent-assigned-network-domain",
+            id="network-assignments",
+        ),
+    ],
+)
+def test_actual_gitleaks_domain_companions_do_not_truncate_invalid_second_value(
+    tmp_path: Path,
+    path: str,
+    content: str,
+    owning_rule: str,
+    companion_rule: str,
+) -> None:
+    """The general sequence boundary must still reject a trailing-hyphen TLD."""
+    findings = actual_gitleaks_findings(tmp_path, {path: content})
+
+    assert len(findings) == 1
+    assert findings[0]["RuleID"] == owning_rule
+    assert companion_rule not in {finding["RuleID"] for finding in findings}
 
 
 @pytest.mark.parametrize(

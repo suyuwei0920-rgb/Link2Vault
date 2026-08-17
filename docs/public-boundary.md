@@ -38,6 +38,7 @@ Link2Vault is a fresh public repository for reusable, self-hosted software. Ever
 1. Add files from the allowlist one at a time; do not copy repository history or broad directories.
 2. Confirm every example, fixture, screenshot, and generated artifact is synthetic or generic.
 3. Search staged content for secrets, production endpoint strings, and absolute paths before committing.
-4. Keep the donor project, its `.git` directory, real data, credentials, and production deployment material outside this repository.
+4. Run `uv run python scripts/audit_public_tree.py . --history HEAD` so deleted paths and blobs cannot remain hidden in reachable history.
+5. Keep the donor project, its `.git` directory, real data, credentials, and production deployment material outside this repository.
 
 If a file does not clearly fit the allowlist, keep it private until it has been reviewed.

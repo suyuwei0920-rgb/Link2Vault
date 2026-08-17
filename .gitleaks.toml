@@ -62,6 +62,41 @@ secretGroup = 1
     ]
 
 [[rules]]
+id = "production-dsn-endpoint"
+description = "Production database, cache, or broker DSN"
+regex = '''(?im)\b((?:DUMMY_)?(?:postgres(?:ql)?|mysql|mariadb|rediss?|mongodb|amqps?|kafka|nats)(?:\+[a-z0-9][a-z0-9._-]*)?://[^\s\x60'"<>]+)'''
+secretGroup = 1
+keywords = ["postgres", "mysql", "mariadb", "redis", "mongodb", "amqp", "kafka", "nats", "dummy_"]
+
+    [[rules.allowlists]]
+    description = "Credential-free reserved and canonical DSN examples"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:postgres(?:ql)?|mysql|mariadb|rediss?|mongodb|amqps?|kafka|nats)(?:\+[a-z0-9][a-z0-9._-]*)?://(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org)|api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?(?:/[a-z0-9._~!$&()*+,;=:@%/-]*)?$''',
+    ]
+
+[[rules]]
+id = "assigned-production-endpoint"
+description = "Endpoint in an explicit URL, URI, DSN, or webhook assignment"
+regex = '''(?im)\b(?:(?:[a-z0-9]+_)*(?:url|uri|dsn)|(?:[a-z0-9]+_)*webhook)\b[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:(?:(?:https?|(?:postgres(?:ql)?|mysql|mariadb|rediss?|mongodb|amqps?|kafka|nats)(?:\+[a-z0-9][a-z0-9._-]*)?)://[^\s\x60'"<>;,)}\]]+)|(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?|\[[0-9a-f:.]+(?:%25[a-z0-9._~-]+)?\](?::[0-9]{1,5})?))'''
+secretGroup = 1
+
+    [[rules.allowlists]]
+    description = "Credential-free reserved and canonical endpoint examples"
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:(?:https?|(?:postgres(?:ql)?|mysql|mariadb|rediss?|mongodb|amqps?|kafka|nats)(?:\+[a-z0-9][a-z0-9._-]*)?)://)?(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org)|api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?(?:/[a-z0-9._~!$&()*+,;=:@%/-]*)?$''',
+      '''(?i)^\[::1\](?::[0-9]{1,5})?$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Bare BASE_URL hosts remain owned by assigned-network-domain"
+    regexTarget = "match"
+    regexes = [
+      '''(?i)^\b(?:[a-z0-9]+_)*base_url\b[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?$''',
+    ]
+
+[[rules]]
 id = "assigned-network-domain"
 description = "Network domain in an explicit deployment assignment"
 regex = '''(?im)(?:^|[\s;,{(])[\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
@@ -88,7 +123,7 @@ description = "Second network domain in adjacent deployment assignments"
 # Human ruling: companions capture exactly the complete validated pair so
 # --redact hides both domains but not either surrounding boundary; the owning
 # primary rule above retains its domain-only capture.
-regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:$|[\t ;,)\]}]|[^a-z0-9_.\t ;,)\]}-][^\t\r\n ;,)\]}]*)'''
+regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:-[a-z0-9-]*(?:$|[\t\r\n ;,)\]}])|\b)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -105,6 +140,11 @@ secretGroup = 1
     regexes = [
       '''(?im)^(?:[\s;,{(])?(?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;](?:(?:[a-z0-9]+_)*(?:host|hostname|endpoint|base_url|server|origin|api_host)|base-url|api-host)[\t ]*[:=][\t ]*(?:location\.origin|window\.location\.origin|config\.server|settings\.host)[\t ]*[;,) ]?$''',
     ]
+
+    [[rules.allowlists]]
+    description = "Invalid trailing-hyphen DNS values are not truncated"
+    regexTarget = "match"
+    regexes = ['''(?i)-[a-z0-9-]*(?:[\t\r\n ;,)\]}])?$''']
 
 [[rules]]
 id = "assigned-domain-name"
@@ -126,7 +166,7 @@ description = "Second domain in adjacent DOMAIN assignments"
 # Human ruling: companions capture exactly the complete validated pair so
 # --redact hides both domains but not either surrounding boundary; the owning
 # primary rule above retains its domain-only capture.
-regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:$|[^a-z0-9_.-])'''
+regex = '''(?im)(?:^|[\s;,{(])([\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))(?::[0-9]{1,5})?)(?:-[a-z0-9-]*(?:$|[\t\r\n ;,)\]}])|\b)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -137,10 +177,15 @@ secretGroup = 1
       '''(?i)^.*[\t ,;][\x60'"]?(?:(?:[a-z0-9]+_)*domain|(?:[a-z0-9]+-)*domain)[\x60'"]?[\t ]*[:=][\t ]*[\x60'"]?(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)(?::[0-9]{1,5})?$''',
     ]
 
+    [[rules.allowlists]]
+    description = "Invalid trailing-hyphen DNS values are not truncated"
+    regexTarget = "match"
+    regexes = ['''(?i)-[a-z0-9-]*(?:[\t\r\n ;,)\]}])?$''']
+
 [[rules]]
 id = "bare-deployment-domain"
 description = "Bare deployment-style network domain"
-regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|\b[\t ]+|[;,\[\{(][\t ]*)((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:-[a-z0-9.-]*(?:$|[\t\r\n ;,)\]}])|\b)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -151,25 +196,52 @@ secretGroup = 1
       '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
     ]
 
+    [[rules.allowlists]]
+    description = "Reviewed source logging member chains"
+    condition = "AND"
+    paths = ['''(?i)\.(?:bash|c|cc|cpp|cs|dart|go|java|js|jsx|kt|kts|php|py|rb|rs|scala|sh|swift|ts|tsx|zsh)$''']
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:api|app|backend|service|webhook|worker)\.(?:log|logger)\.(?:critical|debug|error|exception|info|warn|warning)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Invalid trailing-hyphen DNS values are not truncated"
+    regexTarget = "match"
+    regexes = ['''(?i)-[a-z0-9.-]*(?:[\t\r\n ;,)\]}])?$''']
+
+    [[rules.allowlists]]
+    description = "Documentation and configuration paths are owned by prose-domain rules"
+    paths = ['''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)''']
+
 [[rules]]
-id = "bare-deployment-domain-arbitrary"
-description = "Bare arbitrary-TLD deployment domain in documentation or configuration"
-path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?)$|^docs/|(?:^|/)(?:\.env\.example|[^/]+\.(?:adoc|env(?:\.example)?|ini|cfg|conf|json|markdown|md|mdx|properties|rst|toml|txt|ya?ml)|(?:dockerfile|caddyfile)(?:\.[^/]+)?|compose\.ya?ml)$)'''
-regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|[^:=\s][\t ]+|[;,\[\{(])((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+id = "bare-deployment-domain-docs-source"
+description = "Bare deployment-style network domain in documentation source examples"
+path = '''(?i)^docs/(?:.*/)?[^/]+\.(?:bash|c|cc|cpp|cs|dart|go|java|js|jsx|kt|kts|php|py|rb|rs|scala|sh|swift|ts|tsx|zsh)$'''
+regex = '''(?im)(?:(?:^|[\r\n])[\t ]*|\b[\t ]+|[;,\[\{(][\t ]*)((?:DUMMY_)?(?:api|app|auth|admin|prod|production|staging|stage|dev|internal|backend|webhook|hooks|service|gateway|upload|download|cdn|storage|db|database|redis|mqtt|s3|cos|kb|worker)\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?::[0-9]{1,5})?(?:-[a-z0-9.-]*(?:$|[\t\r\n ;,)\]}])|\b)'''
 secretGroup = 1
 
     [[rules.allowlists]]
-    description = "Reserved families, canonical hosts, and finite TLDs owned globally"
+    description = "Reserved domain families and reviewed canonical public hosts"
     regexTarget = "secret"
     regexes = [
       '''(?i)^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*(?:example|invalid|localhost|test)|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*example\.(?:com|net|org))$''',
       '''(?i)^(?:api\.github\.com|astral\.sh|docker\.io|docs\.docker\.com|docs\.python\.org|fastapi\.tiangolo\.com|files\.pythonhosted\.org|ghcr\.io|github\.com|hub\.docker\.com|opensource\.org|pypi\.org|raw\.githubusercontent\.com|spdx\.org|starlette\.io|www\.apache\.org|www\.uvicorn\.org)$''',
-      '''(?i)^.*\.(?:com|net|org|io|ai|cn|co|uk|dev|app|cloud|tech|xyz|top|site|online|info|biz|cc|tv|me|us|de|jp|sg|hk|museum|internal|local|lan|corp|test|invalid|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))$''',
     ]
 
     [[rules.allowlists]]
-    description = "Source-code extensions remain outside arbitrary prose scope"
-    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
+    description = "Reviewed source logging member chains"
+    condition = "AND"
+    paths = ['''(?i)\.(?:bash|c|cc|cpp|cs|dart|go|java|js|jsx|kt|kts|php|py|rb|rs|scala|sh|swift|ts|tsx|zsh)$''']
+    regexTarget = "secret"
+    regexes = [
+      '''(?i)^(?:api|app|backend|service|webhook|worker)\.(?:log|logger)\.(?:critical|debug|error|exception|info|warn|warning)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Invalid trailing-hyphen DNS values are not truncated"
+    regexTarget = "match"
+    regexes = ['''(?i)-[a-z0-9.-]*(?:[\t\r\n ;,)\]}])?$''']
 
 [[rules]]
 id = "bare-apex-domain"
@@ -188,7 +260,7 @@ secretGroup = 1
 
     [[rules.allowlists]]
     description = "Source-code extensions remain outside arbitrary prose scope"
-    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
+    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:bash|c|cc|cpp|cs|dart|go|java|js|jsx|kt|kts|php|py|rb|rs|scala|sh|swift|ts|tsx|zsh)$''']
 
 [[rules]]
 id = "adjacent-bare-apex-domain"
@@ -197,7 +269,7 @@ path = '''(?i)(?:^(?:README\.md|SECURITY\.md|NOTICE|THIRD_PARTY_NOTICES(?:\.md)?
 # Human ruling: companions capture exactly the complete validated pair so
 # --redact hides both domains but not either surrounding boundary; the owning
 # primary rule above retains its domain-only capture.
-regex = '''(?im)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;](?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:$|[^a-z0-9_.-]|\.(?:$|[\t \r\n]))'''
+regex = '''(?im)(?:^|[^a-z0-9_.-])((?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9]))[\t ,;](?:DUMMY_)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])))(?:-[a-z0-9-]*(?:$|[\t\r\n ;,)\]}])|\b)'''
 secretGroup = 1
 
     [[rules.allowlists]]
@@ -210,7 +282,12 @@ secretGroup = 1
 
     [[rules.allowlists]]
     description = "Source-code extensions remain outside arbitrary prose scope"
-    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:java|py|ts|tsx)$''']
+    paths = ['''(?i)^docs/(?:.*/)?[^/]+\.(?:bash|c|cc|cpp|cs|dart|go|java|js|jsx|kt|kts|php|py|rb|rs|scala|sh|swift|ts|tsx|zsh)$''']
+
+    [[rules.allowlists]]
+    description = "Invalid trailing-hyphen DNS values are not truncated"
+    regexTarget = "match"
+    regexes = ['''(?i)-[a-z0-9-]*(?:[\t\r\n ;,)\]}])?$''']
 
 [[rules]]
 id = "production-ipv4-literal"
@@ -237,10 +314,12 @@ targetRules = [
   "bark-device-key",
   "pem-block",
   "non-example-domain",
+  "production-dsn-endpoint",
+  "assigned-production-endpoint",
   "assigned-network-domain",
   "assigned-domain-name",
   "bare-deployment-domain",
-  "bare-deployment-domain-arbitrary",
+  "bare-deployment-domain-docs-source",
   "bare-apex-domain",
   "production-ipv4-literal",
   "generic-api-key",
@@ -273,7 +352,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed Markdown-link lines in the root README"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -289,7 +367,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed dependency-inventory filename lines"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -304,7 +381,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed Python project metadata lines"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -322,7 +398,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed API Dockerfile copy and entrypoint lines"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -337,7 +412,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed Caddy request-size expression"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -351,7 +425,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed embedded Python member lines in Compose"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -366,21 +439,37 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Reviewed workflow event condition"
+description = "Reviewed workflow event condition and matrix runner"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
 condition = "AND"
 paths = ['''^\.github/workflows/ci\.yml$''']
 regexTarget = "line"
-regexes = ['''(?m)^[\t ]*if: github\.event_name == 'pull_request'$''']
+regexes = [
+  '''(?m)^[\t ]*if: github\.event_name == 'pull_request'$''',
+  '''(?m)^[\t ]*runs-on: \$\{\{ matrix\.os \}\}$''',
+]
+
+[[allowlists]]
+description = "Reviewed public history-audit command lines"
+targetRules = [
+  "bare-apex-domain",
+  "adjacent-bare-apex-domain",
+]
+condition = "AND"
+paths = ['''^(?:\.github/workflows/ci\.yml|SECURITY\.md|docs/public-boundary\.md)$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^uv run python scripts/audit_public_tree\.py \. --history HEAD$''',
+  '''(?m)^[\t ]*- run: uv run python scripts/audit_public_tree\.py \. --history HEAD$''',
+  '''(?m)^4\. Run `uv run python scripts/audit_public_tree\.py \. --history HEAD` so deleted paths and blobs cannot remain hidden in reachable history\.$''',
+]
 
 [[allowlists]]
 description = "Reviewed nested rule allowlist declaration"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -392,7 +481,6 @@ regexes = ['''(?m)^[\t ]*\[\[rules\.allowlists\]\]$''']
 [[allowlists]]
 description = "Reviewed operator environment guidance"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]
@@ -406,7 +494,6 @@ regexes = [
 [[allowlists]]
 description = "Reviewed Docker installation filename and command lines"
 targetRules = [
-  "bare-deployment-domain-arbitrary",
   "bare-apex-domain",
   "adjacent-bare-apex-domain",
 ]

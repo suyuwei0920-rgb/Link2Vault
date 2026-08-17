@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.1"
           enable-cache: true
@@ -31,16 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.1"
           enable-cache: true
       - run: uv sync --frozen --dev
       - run: uv run python scripts/audit_public_tree.py .
+      - run: uv run python scripts/audit_public_tree.py . --history HEAD
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -52,7 +54,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.1"
           enable-cache: true
@@ -73,7 +75,11 @@ jobs:
       - run: gitleaks git --redact --log-opts=HEAD --config .gitleaks-paths.toml
 
   docker-contract:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,7 +90,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.1"
           enable-cache: true

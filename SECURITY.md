@@ -25,6 +25,7 @@ Use the same local audit entry point as CI:
 uv run pytest
 uv run ruff check .
 uv run python scripts/audit_public_tree.py .
+uv run python scripts/audit_public_tree.py . --history HEAD
 gitleaks git --redact --log-opts=HEAD --config .gitleaks.toml
 gitleaks git --redact --log-opts=HEAD --config .gitleaks-paths.toml
 ```
