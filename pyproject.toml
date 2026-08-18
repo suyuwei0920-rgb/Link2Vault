@@ -9,10 +9,12 @@ description = "Link2Vault public service foundation"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "cos-python-sdk-v5>=1.9.44,<2",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "pydantic-settings>=2.8,<3",
     "python-multipart>=0.0.20,<1",
+    "tencentcloud-sdk-python-asr>=3.1.112,<4",
     "uvicorn>=0.30,<1",
 ]
 

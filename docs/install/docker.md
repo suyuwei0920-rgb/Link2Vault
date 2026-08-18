@@ -1,11 +1,8 @@
-# Docker deployment boundary
+# Docker 安装与运行
 
-This Phase 1 deployment targets Ubuntu 22.04 or 24.04 with Docker Engine and
-Docker Compose v2. Caddy is the only service with a host port. The API and the
-idle Worker placeholder share an internal Docker network and cannot publish a
-container port directly. The API remains internal-only; the Worker additionally
-joins a dedicated outbound-capable network for future Douyin, ASR, LLM, and
-Bark calls. Caddy joins only the edge and internal networks.
+部署目标是 Ubuntu 22.04/24.04、Docker Engine 和 Docker Compose v2。Caddy
+是唯一绑定主机端口的服务；API 只在内部网络，Worker 通过单独的出站网络访问
+抖音、ASR、清洗和通知服务。
 
 ## Configure
 
@@ -34,10 +31,21 @@ using `/admin/*`.
 docker run --rm -it caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d caddy hash-password
 ```
 
-`/healthz` is public and returns only service status and version. `/admin/*`
-requires Caddy Basic Auth. `/ingest/*` is forwarded without Basic Auth because
-the Phase 2 application will validate its bearer token. All request bodies are
-limited by `LINK2VAULT_MAX_UPLOAD_MB`.
+首次生产运行还必须填写：
+
+- `LINK2VAULT_ASR_PROVIDER=tencent`；
+- 腾讯云 SecretId、SecretKey、地域和私有 COS 桶；
+- `LINK2VAULT_CLEANER_PROVIDER=deepseek`、DeepSeek API 根地址和密钥；
+- 可选的 Bark API 根地址与设备 Key。
+
+COS 桶必须保持私有，并给 `temporary/` 前缀配置 1 天生命周期规则作为删除失败时的
+兜底。腾讯适配器每次先查询预付费资源包：免费录音识别包足够时使用普通引擎，
+否则仅在已购录音识别 2.0 包足够时使用 2.0 引擎；无法确认余额或两者均不足时
+任务失败并停止。
+
+`/healthz` 公开且只返回状态和版本。`/admin/*` 使用 Caddy Basic Auth，写操作
+还要求同源 CSRF 令牌。`/ingest/*` 不使用 Basic Auth，因为应用会验证每台设备的
+Bearer Token。请求体受 `LINK2VAULT_MAX_UPLOAD_MB` 限制。
 
 The host binding is loopback-only on port 8080. Put any wider network exposure
 behind an operator-controlled firewall or load balancer; never publish the API
@@ -70,9 +78,8 @@ docker compose --env-file deploy/docker/operator.env -f deploy/docker/compose.ym
 `app-data`, `vault-data`, and `media-tmp`. Back up and inspect those volumes
 before any explicit volume-removal operation.
 
-The Worker intentionally runs a non-busy idle command with concurrency `1` in
-Phase 1. Phase 2 must replace that command with the real Worker entry point; it
-must not increase concurrency until resource and failure behavior are measured.
+Worker 默认单并发运行真实的断点续跑管线。不要在测量腾讯限额、内存占用和失败重试
+行为前提高并发。
 
 ## Update immutable image pins
 

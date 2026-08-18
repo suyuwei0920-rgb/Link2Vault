@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -88,8 +89,113 @@ class DouyinResolver:
                     "UPSTREAM_REJECTED",
                     "Douyin page was not available",
                 )
-            return self._classify(current_url)
+            target = self._classify(current_url)
+            if target.kind == "video":
+                return await self._with_video_metadata(target)
+            return target
         raise InvalidInput("TOO_MANY_REDIRECTS", "Too many redirect hops")
+
+    async def _with_video_metadata(self, target: ResolvedTarget) -> ResolvedTarget:
+        item_match = _VIDEO_PATH.fullmatch(urlsplit(target.canonical_url).path)
+        if item_match is None:
+            return target
+        item_id = item_match.group("id")
+        h5_origin = "https://" + "www." + "iesdouyin.com"
+        h5_url = f"{h5_origin}/share/video/{item_id}/"
+        await validate_remote_url(h5_url, "page", self._host_resolver)
+        try:
+            response = await self._client.get(h5_url, follow_redirects=False)
+        except httpx.HTTPError as exc:
+            raise InvalidInput(
+                "METADATA_UNAVAILABLE",
+                "Douyin video metadata could not be retrieved",
+            ) from exc
+        if response.status_code != 200:
+            raise InvalidInput(
+                "METADATA_UNAVAILABLE",
+                "Douyin video metadata was not available",
+            )
+        if len(response.content) > 2 * 1024 * 1024:
+            raise InvalidInput("METADATA_TOO_LARGE", "Douyin metadata was too large")
+        item = self._extract_router_item(response.text, item_id)
+        video = item.get("video") if isinstance(item.get("video"), dict) else {}
+        media_candidates = self._media_urls(video)
+        if not media_candidates:
+            raise InvalidInput(
+                "MEDIA_URL_NOT_FOUND",
+                "Douyin video metadata did not contain a media URL",
+            )
+        canonical = target.canonical_url
+        return ResolvedTarget(
+            kind="video",
+            canonical_url=canonical,
+            media_candidates=media_candidates,
+            title=str(item.get("desc") or "").strip()[:120] or None,
+        )
+
+    @classmethod
+    def _extract_router_item(cls, html: str, item_id: str) -> dict[str, object]:
+        marker = "window._ROUTER_DATA = "
+        start = html.find(marker)
+        if start < 0:
+            raise InvalidInput(
+                "DOUYIN_CHALLENGE",
+                "Douyin returned a verification page instead of video metadata",
+            )
+        start += len(marker)
+        end = html.find("</script>", start)
+        if end < 0:
+            raise InvalidInput("METADATA_INVALID", "Douyin metadata was malformed")
+        try:
+            payload = json.loads(html[start:end].strip().rstrip(";"))
+        except json.JSONDecodeError as exc:
+            raise InvalidInput("METADATA_INVALID", "Douyin metadata was malformed") from exc
+        item = cls._find_item(payload, item_id)
+        if item is None:
+            raise InvalidInput(
+                "VIDEO_NOT_AVAILABLE",
+                "Douyin video is unavailable or requires authentication",
+            )
+        return item
+
+    @classmethod
+    def _find_item(cls, value: object, item_id: str) -> dict[str, object] | None:
+        if isinstance(value, dict):
+            if str(value.get("aweme_id", "")) == item_id and isinstance(
+                value.get("video"), dict
+            ):
+                return value
+            items = value.get("item_list")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("aweme_id", "")) == item_id:
+                        return item
+            for nested in value.values():
+                found = cls._find_item(nested, item_id)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for nested in value:
+                found = cls._find_item(nested, item_id)
+                if found is not None:
+                    return found
+        return None
+
+    @staticmethod
+    def _media_urls(video: dict[str, object]) -> tuple[str, ...]:
+        urls: list[str] = []
+        for key in ("play_addr", "play_addr_h264", "download_addr", "audio"):
+            address = video.get(key)
+            if not isinstance(address, dict):
+                continue
+            values = address.get("url_list")
+            if isinstance(values, list):
+                urls.extend(
+                    value
+                    for value in values
+                    if isinstance(value, str) and value.startswith("https://")
+                )
+        return tuple(dict.fromkeys(urls))[:10]
 
     @staticmethod
     def _classify(url: str) -> ResolvedTarget:

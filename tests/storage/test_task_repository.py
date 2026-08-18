@@ -92,6 +92,20 @@ def test_completing_stages_preserves_earlier_artifacts(tmp_path) -> None:
     assert updated.stage is TaskStage.ASR
 
 
+def test_running_douyin_fetch_can_persist_probed_media_duration(tmp_path) -> None:
+    repository = TaskRepository(tmp_path)
+    created = repository.create_capture(
+        source=CaptureSource.DOUYIN,
+        fingerprint="sha256:douyin-duration",
+    )
+    repository.claim_next("worker-a")
+    repository.complete_stage(created.id, TaskStage.VALIDATING, "validated")
+
+    updated = repository.set_media_seconds(created.id, 61.5)
+
+    assert updated.media_seconds == 61.5
+
+
 def test_terminal_task_requires_explicit_reset_before_mutation(tmp_path) -> None:
     repository = TaskRepository(tmp_path)
     created = repository.create_capture(

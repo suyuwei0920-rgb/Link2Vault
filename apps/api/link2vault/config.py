@@ -28,6 +28,11 @@ _ALLOWED_ENVIRONMENT_VARIABLES = frozenset(
         "LINK2VAULT_ASR_BASE_URL",
         "LINK2VAULT_ASR_API_KEY",
         "LINK2VAULT_ASR_MODEL",
+        "LINK2VAULT_TENCENT_SECRET_ID",
+        "LINK2VAULT_TENCENT_SECRET_KEY",
+        "LINK2VAULT_TENCENT_REGION",
+        "LINK2VAULT_TENCENT_COS_BUCKET",
+        "LINK2VAULT_TENCENT_ASR_SAFETY_SECONDS",
         "LINK2VAULT_CLEANER_PROVIDER",
         "LINK2VAULT_DEEPSEEK_BASE_URL",
         "LINK2VAULT_DEEPSEEK_API_KEY",
@@ -43,7 +48,11 @@ _ALLOWED_ENVIRONMENT_VARIABLES = frozenset(
 class Settings(BaseSettings):
     """Configuration loaded from explicitly supported environment variables."""
 
-    model_config = SettingsConfigDict(env_prefix=_ENVIRONMENT_PREFIX, extra="forbid")
+    model_config = SettingsConfigDict(
+        env_prefix=_ENVIRONMENT_PREFIX,
+        env_ignore_empty=True,
+        extra="forbid",
+    )
 
     app_name: str = "Link2Vault"
     app_env: str = "development"
@@ -66,6 +75,11 @@ class Settings(BaseSettings):
     asr_base_url: str | None = None
     asr_api_key: SecretStr | None = None
     asr_model: str | None = None
+    tencent_secret_id: SecretStr | None = None
+    tencent_secret_key: SecretStr | None = None
+    tencent_region: str = "ap-guangzhou"
+    tencent_cos_bucket: str | None = None
+    tencent_asr_safety_seconds: float = Field(default=300, ge=0, le=3600)
     cleaner_provider: str = "fake"
     deepseek_base_url: str | None = None
     deepseek_api_key: SecretStr | None = None

@@ -274,6 +274,25 @@ class TaskRepository:
         )
         return self.get(task_id)
 
+    def set_media_seconds(self, task_id: str, media_seconds: float) -> CaptureTask:
+        """Persist a server-probed duration during the running fetch stage."""
+
+        if media_seconds <= 0:
+            raise ValueError("media_seconds must be positive")
+        current = self.get(task_id)
+        if (
+            current.status is not TaskStatus.RUNNING
+            or current.stage is not TaskStage.FETCHING
+        ):
+            raise ValueError("media duration can only be set during running fetch")
+        if current.media_seconds is not None:
+            raise ValueError("media duration is already set")
+        self._connection.execute(
+            "UPDATE capture_tasks SET media_seconds = ?, updated_at = ? WHERE id = ?",
+            (media_seconds, _now().isoformat(), task_id),
+        )
+        return self.get(task_id)
+
     def heartbeat(self, task_id: str, worker_id: str) -> bool:
         """Refresh one running claim only for its owning worker."""
 

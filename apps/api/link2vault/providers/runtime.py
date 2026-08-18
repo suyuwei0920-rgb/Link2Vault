@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import asdict
@@ -20,6 +21,9 @@ from link2vault_providers.contracts import (
 
 from link2vault.config import Settings
 from link2vault.domain.tasks import CaptureSource, CaptureTask, TaskStage
+from link2vault.ingest.douyin_resolver import DouyinResolver
+from link2vault.ingest.media_downloader import DouyinMediaDownloader
+from link2vault.media.probe import MediaRejected, probe_media
 from link2vault.output.markdown import write_task_artifacts
 from link2vault.providers.factory import (
     build_asr_provider,
@@ -29,10 +33,21 @@ from link2vault.providers.factory import (
 from link2vault.worker.pipeline import Pipeline, StageHandlers
 
 
-def build_runtime_pipeline(settings: Settings, repository) -> Pipeline:
+def build_runtime_pipeline(
+    settings: Settings,
+    repository,
+    *,
+    douyin_resolver: DouyinResolver | None = None,
+    media_downloader: DouyinMediaDownloader | None = None,
+) -> Pipeline:
     asr = build_asr_provider(settings)
     cleaner = build_cleaner_provider(settings)
     notifiers = build_notifiers(settings)
+    resolver = douyin_resolver or DouyinResolver()
+    downloader = media_downloader or DouyinMediaDownloader(
+        media_root=settings.media_tmp_dir,
+        max_bytes=settings.max_upload_mb * 1024 * 1024,
+    )
 
     def checkpoint(task: CaptureTask, name: str) -> Path:
         return settings.data_dir / "checkpoints" / task.id / name
@@ -42,16 +57,55 @@ def build_runtime_pipeline(settings: Settings, repository) -> Pipeline:
             return _validated_input(task, settings)
         if task.stage is TaskStage.FETCHING:
             if task.source is CaptureSource.DOUYIN:
-                if settings.app_env == "development" and settings.asr_provider == "fake":
+                if (
+                    douyin_resolver is None
+                    and media_downloader is None
+                    and settings.app_env == "development"
+                    and settings.asr_provider == "fake"
+                ):
                     return _validated_input(task, settings)
-                raise ProviderError(
-                    "DOUYIN_FETCH_ADAPTER_REQUIRED",
-                    retryable=False,
-                    safe_message="Douyin media fetch adapter is not configured",
-                )
+                target = await resolver.resolve(_validated_input(task, settings))
+                if target.kind != "video":
+                    raise ProviderError(
+                        "DOUYIN_PROFILE_EXPERIMENTAL",
+                        retryable=False,
+                        safe_message="Douyin profile collection is not enabled",
+                    )
+                media_path = await downloader.download(target.media_candidates, task.id)
+                try:
+                    probed = await asyncio.to_thread(probe_media, media_path)
+                except MediaRejected as exc:
+                    raise ProviderError(
+                        exc.code,
+                        retryable=False,
+                        safe_message="Downloaded Douyin media was rejected",
+                    ) from exc
+                if probed.duration_seconds > settings.max_audio_minutes * 60:
+                    raise ProviderError(
+                        "INVALID_DURATION",
+                        retryable=False,
+                        safe_message="Douyin media is longer than allowed",
+                    )
+                repository.set_media_seconds(task.id, probed.duration_seconds)
+                return str(media_path)
             return _validated_input(task, settings)
         if task.stage is TaskStage.ASR:
-            media_path = Path(_validated_input(task, settings))
+            fetched = task.artifacts.get(TaskStage.FETCHING.value)
+            if fetched is None:
+                raise ProviderError(
+                    "FETCH_ARTIFACT_MISSING",
+                    retryable=False,
+                    safe_message="Fetched media checkpoint is missing",
+                )
+            if (
+                task.source is CaptureSource.DOUYIN
+                and settings.app_env == "development"
+                and settings.asr_provider == "fake"
+                and fetched.startswith("https://")
+            ):
+                media_path = Path(fetched)
+            else:
+                media_path = Path(_validated_media_path(fetched, settings))
             result = await asr.transcribe(
                 MediaInput(media_path, task.media_seconds or 1.0)
             )
@@ -111,7 +165,11 @@ def _validated_input(task: CaptureTask, settings: Settings) -> str:
         )
     if task.source is CaptureSource.DOUYIN:
         return task.input_ref
-    candidate = Path(task.input_ref)
+    return _validated_media_path(task.input_ref, settings)
+
+
+def _validated_media_path(value: str, settings: Settings) -> str:
+    candidate = Path(value)
     try:
         root = settings.media_tmp_dir.resolve(strict=True)
         resolved = candidate.resolve(strict=True)

@@ -128,7 +128,7 @@ def test_api_and_worker_use_the_same_persistent_runtime_paths() -> None:
         assert {key: environment[key] for key in expected} == expected
 
 
-def test_worker_is_single_concurrency_and_does_not_run_the_api_command() -> None:
+def test_worker_uses_the_single_process_entrypoint_and_not_the_api_command() -> None:
     services = load_compose()["services"]
 
     assert services["worker"]["command"] != services["api"]["command"]
@@ -136,9 +136,7 @@ def test_worker_is_single_concurrency_and_does_not_run_the_api_command() -> None
         "python",
         "/opt/link2vault/bin/link2vault-worker",
     ]
-    assert services["worker"]["environment"]["LINK2VAULT_WORKER_CONCURRENCY"] == (
-        "${LINK2VAULT_WORKER_CONCURRENCY:-1}"
-    )
+    assert "LINK2VAULT_WORKER_CONCURRENCY" not in services["worker"]["environment"]
 
 
 def test_runtime_image_contains_provider_package_and_extensionless_worker_entrypoint() -> None:
@@ -549,15 +547,23 @@ def test_examples_contain_only_safe_defaults_and_empty_operator_values() -> None
     assert values == {
         "LINK2VAULT_APP_ENV": "production",
         "LINK2VAULT_MAX_UPLOAD_MB": "1024",
-        "LINK2VAULT_MAX_AUDIO_MINUTES_PER_JOB": "240",
-        "LINK2VAULT_MONTHLY_AUDIO_MINUTES_LIMIT": "600",
-        "LINK2VAULT_WORKER_CONCURRENCY": "1",
-        "LINK2VAULT_MEDIA_RETENTION_SUCCESS_HOURS": "24",
-        "LINK2VAULT_MEDIA_RETENTION_FAILED_DAYS": "7",
-        "LINK2VAULT_LOG_RETENTION_DAYS": "14",
+        "LINK2VAULT_MAX_AUDIO_MINUTES": "240",
+        "LINK2VAULT_MONTHLY_AUDIO_MINUTES": "600",
         "LINK2VAULT_HTTP_PORT": "8080",
         "LINK2VAULT_ADMIN_USER": "",
         "LINK2VAULT_ADMIN_PASSWORD_HASH": "",
+        "LINK2VAULT_ASR_PROVIDER": "tencent",
+        "LINK2VAULT_TENCENT_SECRET_ID": "",
+        "LINK2VAULT_TENCENT_SECRET_KEY": "",
+        "LINK2VAULT_TENCENT_REGION": "ap-guangzhou",
+        "LINK2VAULT_TENCENT_COS_BUCKET": "",
+        "LINK2VAULT_TENCENT_ASR_SAFETY_SECONDS": "300",
+        "LINK2VAULT_CLEANER_PROVIDER": "deepseek",
+        "LINK2VAULT_DEEPSEEK_BASE_URL": "",
+        "LINK2VAULT_DEEPSEEK_API_KEY": "",
+        "LINK2VAULT_DEEPSEEK_MODEL": "deepseek-chat",
+        "LINK2VAULT_BARK_BASE_URL": "",
+        "LINK2VAULT_BARK_DEVICE_KEY": "",
     }
 
 

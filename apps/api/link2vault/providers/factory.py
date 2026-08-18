@@ -18,6 +18,7 @@ from link2vault_providers.tencent_asr import (
     TencentAsrBackend,
     TencentAsrProvider,
     TencentQuotaSnapshot,
+    TencentSdkBackend,
 )
 from link2vault_providers.webhook import WebhookNotifier
 
@@ -51,13 +52,36 @@ def build_asr_provider(
             client=client,
         )
     if settings.asr_provider == "tencent":
-        if tencent_backend is None or quota_loader is None:
+        if tencent_backend is None and quota_loader is None:
+            required = {
+                "TENCENT_SECRET_ID": settings.tencent_secret_id,
+                "TENCENT_SECRET_KEY": settings.tencent_secret_key,
+                "TENCENT_COS_BUCKET": settings.tencent_cos_bucket,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ProviderConfigurationError(
+                    "Tencent ASR requires " + ", ".join(missing)
+                )
+            assert settings.tencent_secret_id is not None
+            assert settings.tencent_secret_key is not None
+            assert settings.tencent_cos_bucket is not None
+            backend = TencentSdkBackend(
+                secret_id=settings.tencent_secret_id.get_secret_value(),
+                secret_key=settings.tencent_secret_key.get_secret_value(),
+                region=settings.tencent_region,
+                bucket=settings.tencent_cos_bucket,
+            )
+            tencent_backend = backend
+            quota_loader = backend.load_quota
+        elif tencent_backend is None or quota_loader is None:
             raise ProviderConfigurationError(
                 "Tencent ASR requires a configured backend and prepaid quota loader"
             )
         return TencentAsrProvider(
             backend=tencent_backend,
             quota_loader=quota_loader,
+            safety_seconds=settings.tencent_asr_safety_seconds,
         )
     raise ProviderConfigurationError("Unknown ASR provider")
 
