@@ -22,6 +22,7 @@ jobs:
         with:
           version: "0.12.1"
           enable-cache: true
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg
       - run: uv sync --frozen --dev
       - run: uv run pytest
       - run: uv run ruff check .

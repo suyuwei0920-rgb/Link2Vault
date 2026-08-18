@@ -1408,7 +1408,11 @@ def test_ci_workflow_enforces_job_placement_and_security_contracts() -> None:
         }
         for job_name, job in jobs.items()
     }
-    assert {"uv run pytest", "uv run ruff check ."} <= commands_by_job["test"]
+    assert {
+        "sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg",
+        "uv run pytest",
+        "uv run ruff check .",
+    } <= commands_by_job["test"]
     assert "uv run python scripts/audit_public_tree.py ." in commands_by_job[
         "public-tree-audit"
     ]
