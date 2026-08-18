@@ -7,6 +7,7 @@ Link2Vault is a fresh public repository for reusable, self-hosted software. Ever
 | Path or file type | Permitted public content | Conditions |
 | --- | --- | --- |
 | `apps/` | Generic API, web, and mobile source code | Remove production coupling and user-specific paths. |
+| `clients/ios/` | Secret-free Shortcut manifests and setup documentation | No signed bundles, server defaults, tokens, or private screenshots. |
 | `packages/` | Reusable libraries and provider adapters | No embedded credentials, production endpoints, or private datasets. |
 | `deploy/docker/` | Self-hosted Docker examples | Use placeholders and an `.env.example`; exclude production overrides. |
 | `docs/` | Installation, operations, security, and product documentation | Use generic/example-only values and synthetic screenshots. |

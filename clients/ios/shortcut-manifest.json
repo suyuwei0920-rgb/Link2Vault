@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "Link2Vault Capture",
+  "setup_inputs": [
+    "server_base_url",
+    "one_time_code"
+  ],
+  "accepts": [
+    "text",
+    "url"
+  ],
+  "enroll_path": "/ingest/enroll",
+  "capture_path": "/ingest/links",
+  "authorization": "bearer_header_from_shortcuts_storage",
+  "experimental": true
+}
