@@ -115,13 +115,38 @@ def test_named_data_volumes_use_explicit_application_mount_points() -> None:
     assert set(services["worker"]["volumes"]) == expected_mounts
 
 
+def test_api_and_worker_use_the_same_persistent_runtime_paths() -> None:
+    services = load_compose()["services"]
+    expected = {
+        "LINK2VAULT_DATA_DIR": "/var/lib/link2vault/app",
+        "LINK2VAULT_MEDIA_TMP_DIR": "/var/lib/link2vault/media-tmp",
+        "LINK2VAULT_VAULT_ROOT": "/var/lib/link2vault/vault",
+    }
+
+    for service_name in ("api", "worker"):
+        environment = services[service_name]["environment"]
+        assert {key: environment[key] for key in expected} == expected
+
+
 def test_worker_is_single_concurrency_and_does_not_run_the_api_command() -> None:
     services = load_compose()["services"]
 
     assert services["worker"]["command"] != services["api"]["command"]
+    assert services["worker"]["command"] == [
+        "python",
+        "/opt/link2vault/bin/link2vault-worker",
+    ]
     assert services["worker"]["environment"]["LINK2VAULT_WORKER_CONCURRENCY"] == (
         "${LINK2VAULT_WORKER_CONCURRENCY:-1}"
     )
+
+
+def test_runtime_image_contains_provider_package_and_extensionless_worker_entrypoint() -> None:
+    dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+    assert "packages/providers/link2vault_providers" in dockerfile
+    assert "apps/api/link2vault-worker" in dockerfile
+    assert "/opt/link2vault/bin/link2vault-worker" in dockerfile
 
 
 def test_api_healthcheck_calls_the_minimal_health_endpoint() -> None:

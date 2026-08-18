@@ -1,0 +1,6 @@
+"""Container entrypoint for the Link2Vault worker."""
+
+from link2vault.worker.main import main
+
+if __name__ == "__main__":
+    main()

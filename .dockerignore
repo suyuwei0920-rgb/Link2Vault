@@ -66,10 +66,17 @@ deploy/**
 !uv.lock
 !apps
 !apps/api
+!apps/api/link2vault-worker
 !apps/api/link2vault
 !apps/api/link2vault/**/
 !apps/api/link2vault/*.py
 !apps/api/link2vault/**/*.py
+!packages
+!packages/providers
+!packages/providers/link2vault_providers
+!packages/providers/link2vault_providers/**/
+!packages/providers/link2vault_providers/*.py
+!packages/providers/link2vault_providers/**/*.py
 
 # Defense in depth after includes: no sensitive or generated package content.
 apps/api/link2vault/**/.env*
@@ -107,3 +114,6 @@ apps/api/link2vault/**/*.tar
 apps/api/link2vault/**/*.gz
 apps/api/link2vault/**/*.apk
 apps/api/link2vault/**/*.aab
+packages/providers/link2vault_providers/**/__pycache__/**
+packages/providers/link2vault_providers/**/*.pyc
+packages/providers/link2vault_providers/**/*.pyo

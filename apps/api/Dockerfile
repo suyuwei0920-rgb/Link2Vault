@@ -17,6 +17,9 @@ ENV PATH="/opt/link2vault/.venv/bin:$PATH" \
 
 RUN groupadd --gid 10001 link2vault \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin link2vault \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p \
         /var/lib/link2vault/app \
         /var/lib/link2vault/vault \
@@ -25,6 +28,8 @@ RUN groupadd --gid 10001 link2vault \
 
 COPY --from=builder --chown=10001:10001 /opt/link2vault/.venv /opt/link2vault/.venv
 COPY --from=builder --chown=10001:10001 /opt/link2vault/apps/api/link2vault /opt/link2vault/apps/api/link2vault
+COPY --chown=10001:10001 packages/providers/link2vault_providers /opt/link2vault/apps/api/link2vault_providers
+COPY --chown=10001:10001 apps/api/link2vault-worker /opt/link2vault/bin/link2vault-worker
 
 USER 10001:10001
 EXPOSE 8000

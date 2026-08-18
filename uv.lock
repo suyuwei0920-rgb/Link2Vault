@@ -200,7 +200,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
+    { name = "python-multipart" },
     { name = "uvicorn" },
 ]
 
@@ -215,7 +217,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pydantic-settings", specifier = ">=2.8,<3" },
+    { name = "python-multipart", specifier = ">=0.0.20,<1" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
 ]
 

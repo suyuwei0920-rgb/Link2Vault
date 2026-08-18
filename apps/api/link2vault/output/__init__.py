@@ -1,0 +1,1 @@
+"""Obsidian-compatible knowledge artifacts."""

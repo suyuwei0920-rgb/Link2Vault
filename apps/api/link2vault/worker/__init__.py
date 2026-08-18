@@ -1,0 +1,1 @@
+"""Resumable capture worker."""

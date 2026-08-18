@@ -34,6 +34,9 @@ services:
       - --no-access-log
     environment:
       LINK2VAULT_APP_ENV: "${LINK2VAULT_APP_ENV:-production}"
+      LINK2VAULT_DATA_DIR: "/var/lib/link2vault/app"
+      LINK2VAULT_MEDIA_TMP_DIR: "/var/lib/link2vault/media-tmp"
+      LINK2VAULT_VAULT_ROOT: "/var/lib/link2vault/vault"
     healthcheck:
       test:
         - CMD
@@ -52,10 +55,15 @@ services:
     <<: *application-service
     command:
       - python
-      - -c
-      - import signal; signal.pause()
+      - /opt/link2vault/bin/link2vault-worker
     environment:
       LINK2VAULT_WORKER_CONCURRENCY: "${LINK2VAULT_WORKER_CONCURRENCY:-1}"
+      LINK2VAULT_APP_ENV: "${LINK2VAULT_APP_ENV:-production}"
+      LINK2VAULT_DATA_DIR: "/var/lib/link2vault/app"
+      LINK2VAULT_MEDIA_TMP_DIR: "/var/lib/link2vault/media-tmp"
+      LINK2VAULT_VAULT_ROOT: "/var/lib/link2vault/vault"
+      LINK2VAULT_ASR_PROVIDER: "${LINK2VAULT_ASR_PROVIDER:-fake}"
+      LINK2VAULT_CLEANER_PROVIDER: "${LINK2VAULT_CLEANER_PROVIDER:-fake}"
     networks:
       - internal
       - outbound

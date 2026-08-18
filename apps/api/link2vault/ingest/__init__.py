@@ -1,0 +1,1 @@
+"""Validated capture input boundaries."""
